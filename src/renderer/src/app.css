@@ -1,0 +1,78 @@
+@import "tailwindcss";
+
+@theme {
+  /* Midnight Terminal palette */
+  --color-surface-0: #0e0e10;
+  --color-surface-1: #141418;
+  --color-surface-2: #1a1a20;
+  --color-surface-3: #222230;
+  --color-border-default: #2d2d3d;
+  --color-text-primary: #e0e0e8;
+  --color-text-secondary: #8888a0;
+  --color-accent: #007acc;
+  --color-success: #3fb950;
+  --color-warning: #d29922;
+  --color-error: #f85149;
+  --color-terminal-bg: #0c0c0e;
+  --color-terminal-fg: #c8c8d0;
+
+  /* Typography */
+  --font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'Cascadia Code', monospace;
+
+  /* Layout tokens */
+  --spacing-sidebar: 260px;
+  --spacing-titlebar: 38px;
+  --spacing-tabbar: 36px;
+  --spacing-statusbar: 28px;
+}
+
+/* Base styles */
+* {
+  box-sizing: border-box;
+}
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  background-color: var(--color-surface-0);
+  color: var(--color-text-primary);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-surface-3);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-border-default);
+}
+
+/* Draggable region for title bar */
+.drag-region {
+  -webkit-app-region: drag;
+}
+
+.no-drag {
+  -webkit-app-region: no-drag;
+}
+
+/* Selection */
+::selection {
+  background: color-mix(in srgb, var(--color-accent) 40%, transparent);
+}
