@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import type { Notification } from '../types'
-import { mockNotifications } from '../data/mockData'
+
+let notifCounter = 0
 
 interface NotificationState {
   notifications: Notification[]
@@ -9,10 +10,17 @@ interface NotificationState {
   markAsRead: (id: string) => void
   markAllRead: () => void
   unreadCount: () => number
+  addNotification: (opts: {
+    conversationId: string
+    projectName: string
+    conversationName: string
+    message: string
+    type: Notification['type']
+  }) => void
 }
 
 export const useNotificationStore = create<NotificationState>((set, get) => ({
-  notifications: mockNotifications,
+  notifications: [],
   panelOpen: false,
   togglePanel: () => set((state) => ({ panelOpen: !state.panelOpen })),
   markAsRead: (id) =>
@@ -25,5 +33,17 @@ export const useNotificationStore = create<NotificationState>((set, get) => ({
     set((state) => ({
       notifications: state.notifications.map((n) => ({ ...n, read: true }))
     })),
-  unreadCount: () => get().notifications.filter((n) => !n.read).length
+  unreadCount: () => get().notifications.filter((n) => !n.read).length,
+  addNotification: (opts) =>
+    set((state) => ({
+      notifications: [
+        {
+          id: `notif-${++notifCounter}`,
+          ...opts,
+          read: false,
+          timestamp: new Date().toISOString()
+        },
+        ...state.notifications
+      ]
+    }))
 }))

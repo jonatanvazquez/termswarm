@@ -1,11 +1,21 @@
-import { useState } from 'react'
-import { ChevronRight, FolderOpen, Folder, Plus, Archive } from 'lucide-react'
-import type { Project } from '../../types'
+import { useState, useRef, useEffect } from 'react'
+import { createPortal } from 'react-dom'
+import {
+  ChevronRight,
+  FolderOpen,
+  Folder,
+  Plus,
+  Archive,
+  Trash2,
+  Check,
+  X,
+  Terminal,
+  Sparkles
+} from 'lucide-react'
+import type { Project, ConversationType } from '../../types'
 import { useProjectStore } from '../../store/projectStore'
-import { useUIStore } from '../../store/uiStore'
-import { useConversationStore } from '../../store/conversationStore'
+import { useConversationStore, setPendingRenameForNewTab } from '../../store/conversationStore'
 import { ConversationItem } from './ConversationItem'
-import { InlineInput } from '../common/InlineInput'
 
 interface ProjectItemProps {
   project: Project
@@ -18,25 +28,41 @@ export function ProjectItem({ project }: ProjectItemProps) {
   const setActiveProject = useProjectStore((s) => s.setActiveProject)
   const addConversation = useProjectStore((s) => s.addConversation)
   const renameProject = useProjectStore((s) => s.renameProject)
+  const deleteProject = useProjectStore((s) => s.deleteProject)
   const showArchived = useProjectStore((s) => s.showArchived)
   const openTab = useConversationStore((s) => s.openTab)
-  const addingInProject = useUIStore((s) => s.addingConversationInProject)
-  const startAdding = useUIStore((s) => s.startAddingConversation)
-  const stopAdding = useUIStore((s) => s.stopAddingConversation)
+  const closeTab = useConversationStore((s) => s.closeTab)
 
   const [editing, setEditing] = useState(false)
   const [editValue, setEditValue] = useState(project.name)
+  const [confirmingDelete, setConfirmingDelete] = useState(false)
+  const [showNewMenu, setShowNewMenu] = useState(false)
+  const [menuPos, setMenuPos] = useState({ top: 0, left: 0 })
+  const plusRef = useRef<HTMLSpanElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
 
   const isExpanded = expandedIds.has(project.id)
   const isActive = activeProjectId === project.id
-  const isAdding = addingInProject === project.id
 
   const activeConversations = project.conversations.filter((c) => !c.archived)
   const archivedConversations = project.conversations.filter((c) => c.archived)
   const runningCount = activeConversations.filter((c) => c.status === 'running').length
   const unreadCount = activeConversations.filter((c) => c.unread && c.status !== 'running').length
 
+  // Close menu on click outside
+  useEffect(() => {
+    if (!showNewMenu) return
+    const handleClickOutside = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setShowNewMenu(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [showNewMenu])
+
   const handleClick = () => {
+    if (confirmingDelete) return
     if (isActive) {
       toggleExpanded(project.id)
     } else {
@@ -63,21 +89,78 @@ export function ProjectItem({ project }: ProjectItemProps) {
     if (e.key === 'Escape') setEditing(false)
   }
 
-  const handleAddConversation = (e: React.MouseEvent) => {
+  const handlePlusClick = (e: React.MouseEvent) => {
     e.stopPropagation()
-    if (!isExpanded) toggleExpanded(project.id)
-    setActiveProject(project.id)
-    startAdding(project.id)
+    if (plusRef.current) {
+      const rect = plusRef.current.getBoundingClientRect()
+      setMenuPos({ top: rect.bottom + 4, left: rect.left })
+    }
+    setShowNewMenu(true)
   }
 
-  const handleSubmitConversation = (name: string) => {
-    addConversation(project.id, name)
-    stopAdding()
-    setTimeout(() => {
-      const updated = useProjectStore.getState().projects.find((p) => p.id === project.id)
-      const lastConv = updated?.conversations[updated.conversations.length - 1]
-      if (lastConv) openTab(lastConv.id, project.id)
-    }, 0)
+  const createSession = (type: ConversationType) => {
+    setShowNewMenu(false)
+    if (!isExpanded) toggleExpanded(project.id)
+    setActiveProject(project.id)
+
+    const count = project.conversations.length + 1
+    const name = type === 'terminal' ? `Terminal ${count}` : `Session ${count}`
+    addConversation(project.id, name, type)
+
+    // Zustand set() is synchronous — the new ID is available immediately
+    const updated = useProjectStore.getState().projects.find((p) => p.id === project.id)
+    const lastConv = updated?.conversations[updated.conversations.length - 1]
+    if (lastConv) {
+      // Set BEFORE React re-renders the new ConversationItem
+      setPendingRenameForNewTab(lastConv.id)
+      setTimeout(() => openTab(lastConv.id, project.id), 0)
+    }
+  }
+
+  const handleDeleteClick = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    setConfirmingDelete(true)
+  }
+
+  const handleConfirmDelete = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    for (const conv of project.conversations) {
+      closeTab(conv.id)
+    }
+    deleteProject(project.id)
+    setConfirmingDelete(false)
+  }
+
+  const handleCancelDelete = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    setConfirmingDelete(false)
+  }
+
+  if (confirmingDelete) {
+    const count = project.conversations.length
+    return (
+      <div className="flex items-center justify-between rounded bg-error/10 px-2 py-1.5 text-xs">
+        <span className="text-error">
+          Delete {project.name}? ({count} {count === 1 ? 'session' : 'sessions'})
+        </span>
+        <div className="flex items-center gap-1">
+          <button
+            onClick={handleConfirmDelete}
+            className="flex h-5 items-center gap-1 rounded bg-error px-1.5 text-[10px] font-medium text-white hover:bg-error/80"
+          >
+            <Check size={10} />
+            Yes
+          </button>
+          <button
+            onClick={handleCancelDelete}
+            className="flex h-5 items-center gap-1 rounded bg-surface-3 px-1.5 text-[10px] font-medium text-text-secondary hover:bg-surface-2"
+          >
+            <X size={10} />
+            No
+          </button>
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -115,11 +198,19 @@ export function ProjectItem({ project }: ProjectItemProps) {
         )}
         <span className="ml-auto flex items-center gap-1">
           <span
-            onClick={handleAddConversation}
-            title="New conversation"
+            ref={plusRef}
+            onClick={handlePlusClick}
+            title="New session"
             className="flex h-4 w-4 items-center justify-center rounded opacity-0 transition-opacity hover:bg-surface-3 group-hover:opacity-100"
           >
             <Plus size={12} />
+          </span>
+          <span
+            onClick={handleDeleteClick}
+            title="Delete project"
+            className="flex h-4 w-4 items-center justify-center rounded opacity-0 transition-opacity hover:bg-surface-3 hover:text-error group-hover:opacity-100"
+          >
+            <Trash2 size={10} />
           </span>
           {unreadCount > 0 && (
             <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-warning/20 px-1 text-[10px] font-medium text-warning">
@@ -134,20 +225,43 @@ export function ProjectItem({ project }: ProjectItemProps) {
         </span>
       </button>
 
+      {/* Portal-rendered menu so it isn't clipped by sidebar overflow */}
+      {showNewMenu &&
+        createPortal(
+          <div
+            ref={menuRef}
+            className="w-40 overflow-hidden rounded-md border border-border-default bg-surface-1 py-1 shadow-lg"
+            style={{ position: 'fixed', top: menuPos.top, left: menuPos.left, zIndex: 9999 }}
+          >
+            <button
+              onClick={(e) => {
+                e.stopPropagation()
+                createSession('claude')
+              }}
+              className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-text-primary hover:bg-surface-2"
+            >
+              <Sparkles size={12} className="shrink-0 text-accent" />
+              Claude Code
+            </button>
+            <button
+              onClick={(e) => {
+                e.stopPropagation()
+                createSession('terminal')
+              }}
+              className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-text-primary hover:bg-surface-2"
+            >
+              <Terminal size={12} className="shrink-0 text-text-secondary" />
+              Terminal
+            </button>
+          </div>,
+          document.body
+        )}
+
       {isExpanded && (
         <div className="ml-4 mt-0.5 flex flex-col gap-0.5 border-l border-border-default pl-2">
           {activeConversations.map((conv) => (
             <ConversationItem key={conv.id} conversation={conv} />
           ))}
-          {isAdding && (
-            <div className="py-0.5">
-              <InlineInput
-                placeholder="Conversation name..."
-                onSubmit={handleSubmitConversation}
-                onCancel={stopAdding}
-              />
-            </div>
-          )}
           {showArchived && archivedConversations.length > 0 && (
             <div className="mt-1">
               <div className="flex items-center gap-1 px-2 py-1 text-[10px] text-text-secondary">

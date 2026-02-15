@@ -1,11 +1,12 @@
 import { create } from 'zustand'
-import type { Project, Conversation } from '../types'
-import { mockProjects, mockTerminalOutputs } from '../data/mockData'
+import type { Project, Conversation, ConversationStatus, ConversationType } from '../types'
+import { useUIStore } from './uiStore'
 
 export const PROJECT_COLORS = ['#f97316', '#8b5cf6', '#06b6d4', '#10b981', '#ec4899', '#eab308', '#ef4444', '#6366f1']
 
-let projectCounter = 0
-let convCounter = 0
+function uid(): string {
+  return crypto.randomUUID().slice(0, 8)
+}
 
 interface ProjectState {
   projects: Project[]
@@ -16,27 +17,54 @@ interface ProjectState {
   toggleProjectExpanded: (id: string) => void
   toggleShowArchived: () => void
   addProject: (name: string, path: string, color?: string) => void
+  deleteProject: (projectId: string) => void
   renameProject: (projectId: string, name: string) => void
-  addConversation: (projectId: string, name: string) => void
+  addConversation: (projectId: string, name: string, type?: ConversationType) => void
   renameConversation: (conversationId: string, name: string) => void
   archiveConversation: (conversationId: string) => void
   unarchiveConversation: (conversationId: string) => void
   deleteConversation: (conversationId: string) => void
-  duplicateConversation: (conversationId: string) => string | null
+  duplicateConversation: (conversationId: string) => { newId: string; sourceClaudeSessionId?: string; newClaudeSessionId?: string } | null
   markConversationRead: (conversationId: string) => void
+  setConversationStatus: (conversationId: string, status: ConversationStatus) => void
+  setProjectPreview: (projectId: string, previewOpen: boolean, previewUrl: string) => void
+  loadFromDisk: () => Promise<void>
 }
 
 export const useProjectStore = create<ProjectState>((set) => ({
-  projects: mockProjects,
-  activeProjectId: mockProjects[0]?.id ?? null,
-  expandedProjectIds: new Set([mockProjects[0]?.id ?? '']),
+  projects: [],
+  activeProjectId: null,
+  expandedProjectIds: new Set<string>(),
   showArchived: false,
 
   setActiveProject: (id) =>
-    set((state) => ({
-      activeProjectId: id,
-      expandedProjectIds: new Set([...state.expandedProjectIds, id])
-    })),
+    set((state) => {
+      const ui = useUIStore.getState()
+
+      // Save current preview state to outgoing project
+      const projects = state.activeProjectId
+        ? state.projects.map((p) =>
+            p.id === state.activeProjectId
+              ? { ...p, previewOpen: ui.previewOpen, previewUrl: ui.previewUrl }
+              : p
+          )
+        : state.projects
+
+      // Load incoming project's preview state into uiStore
+      const incoming = projects.find((p) => p.id === id)
+      if (incoming) {
+        ui.setPreviewState(
+          incoming.previewOpen ?? false,
+          incoming.previewUrl ?? 'http://localhost:3000'
+        )
+      }
+
+      return {
+        projects,
+        activeProjectId: id,
+        expandedProjectIds: new Set([...state.expandedProjectIds, id])
+      }
+    }),
 
   toggleProjectExpanded: (id) =>
     set((state) => {
@@ -53,13 +81,23 @@ export const useProjectStore = create<ProjectState>((set) => ({
 
   addProject: (name, path, chosenColor?) =>
     set((state) => {
-      const id = `proj-new-${++projectCounter}`
+      const id = `proj-${uid()}`
       const color = chosenColor || PROJECT_COLORS[state.projects.length % PROJECT_COLORS.length]
       const newProject: Project = { id, name, path, color, conversations: [] }
       return {
         projects: [...state.projects, newProject],
         activeProjectId: id,
         expandedProjectIds: new Set([...state.expandedProjectIds, id])
+      }
+    }),
+
+  deleteProject: (projectId) =>
+    set((state) => {
+      const next = state.projects.filter((p) => p.id !== projectId)
+      const wasActive = state.activeProjectId === projectId
+      return {
+        projects: next,
+        activeProjectId: wasActive ? (next[0]?.id ?? null) : state.activeProjectId
       }
     }),
 
@@ -70,18 +108,20 @@ export const useProjectStore = create<ProjectState>((set) => ({
       )
     })),
 
-  addConversation: (projectId, name) =>
+  addConversation: (projectId, name, type = 'claude') =>
     set((state) => {
-      const convId = `conv-new-${++convCounter}`
+      const convId = `conv-${uid()}`
       const newConv: Conversation = {
         id: convId,
         projectId,
         name,
         status: 'running',
-        lastMessage: '> Starting new session...',
+        lastMessage: type === 'terminal' ? '$ Starting terminal...' : '> Starting new session...',
         createdAt: new Date().toISOString(),
         unread: false,
-        archived: false
+        archived: false,
+        claudeSessionId: type === 'claude' ? crypto.randomUUID() : undefined,
+        type
       }
       return {
         projects: state.projects.map((p) =>
@@ -131,7 +171,7 @@ export const useProjectStore = create<ProjectState>((set) => ({
     })),
 
   duplicateConversation: (conversationId) => {
-    let newId: string | null = null
+    let result: { newId: string; sourceClaudeSessionId?: string; newClaudeSessionId?: string } | null = null
     set((state) => {
       let original: Conversation | undefined
       let projectId: string | undefined
@@ -145,19 +185,21 @@ export const useProjectStore = create<ProjectState>((set) => ({
       }
       if (!original || !projectId) return state
 
-      newId = `conv-dup-${++convCounter}`
+      const newId = `conv-${uid()}`
+      const newClaudeSessionId = original.type === 'terminal' ? undefined : crypto.randomUUID()
       const duplicate: Conversation = {
         ...original,
         id: newId,
         name: `${original.name} (copy)`,
+        status: 'idle',
         createdAt: new Date().toISOString(),
         unread: false,
-        archived: false
+        archived: false,
+        claudeSessionId: newClaudeSessionId,
+        type: original.type || 'claude'
       }
 
-      if (mockTerminalOutputs[conversationId]) {
-        mockTerminalOutputs[newId] = [...mockTerminalOutputs[conversationId]]
-      }
+      result = { newId, sourceClaudeSessionId: original.claudeSessionId, newClaudeSessionId }
 
       return {
         projects: state.projects.map((p) =>
@@ -167,7 +209,7 @@ export const useProjectStore = create<ProjectState>((set) => ({
         )
       }
     })
-    return newId
+    return result
   },
 
   markConversationRead: (conversationId) =>
@@ -178,5 +220,121 @@ export const useProjectStore = create<ProjectState>((set) => ({
           c.id === conversationId ? { ...c, unread: false } : c
         )
       }))
-    }))
+    })),
+
+  setConversationStatus: (conversationId, status) =>
+    set((state) => ({
+      projects: state.projects.map((p) => ({
+        ...p,
+        conversations: p.conversations.map((c) =>
+          c.id === conversationId ? { ...c, status } : c
+        )
+      }))
+    })),
+
+  setProjectPreview: (projectId, previewOpen, previewUrl) =>
+    set((state) => ({
+      projects: state.projects.map((p) =>
+        p.id === projectId ? { ...p, previewOpen, previewUrl } : p
+      )
+    })),
+
+  loadFromDisk: async () => {
+    const raw = await window.api.loadProjects()
+    if (!raw || typeof raw !== 'object') return
+
+    // Support both old format (plain array) and new format (object with metadata)
+    let savedProjects: Project[]
+    let savedExpandedIds: string[] = []
+    let savedActiveId: string | null = null
+
+    if (Array.isArray(raw)) {
+      savedProjects = raw as Project[]
+    } else {
+      const data = raw as { projects?: Project[]; expandedIds?: string[]; activeProjectId?: string }
+      savedProjects = data.projects || []
+      savedExpandedIds = data.expandedIds || []
+      savedActiveId = data.activeProjectId || null
+    }
+
+    if (savedProjects.length === 0) return
+
+    // Check if IDs need regeneration (old counter-based IDs have duplicates)
+    const seenIds = new Set<string>()
+    let needsRegen = false
+    for (const p of savedProjects) {
+      if (seenIds.has(p.id)) { needsRegen = true; break }
+      seenIds.add(p.id)
+      for (const c of p.conversations) {
+        if (seenIds.has(c.id)) { needsRegen = true; break }
+        seenIds.add(c.id)
+      }
+      if (needsRegen) break
+    }
+
+    let projects: Project[]
+    if (needsRegen) {
+      projects = savedProjects.map((p) => {
+        const projId = `proj-${uid()}`
+        return {
+          ...p,
+          id: projId,
+          conversations: p.conversations.map((c) => ({
+            ...c,
+            id: `conv-${uid()}`,
+            projectId: projId,
+            status: 'idle' as ConversationStatus,
+            claudeSessionId: c.claudeSessionId || (c.type === 'terminal' ? undefined : crypto.randomUUID()),
+            type: c.type || 'claude'
+          }))
+        }
+      })
+    } else {
+      projects = savedProjects.map((p) => ({
+        ...p,
+        conversations: p.conversations.map((c) => ({
+          ...c,
+          status: 'idle' as ConversationStatus,
+          claudeSessionId: c.claudeSessionId || (c.type === 'terminal' ? undefined : crypto.randomUUID()),
+          type: c.type || 'claude'
+        }))
+      }))
+    }
+
+    // Resolve active project (use saved if still exists, else first)
+    const activeProjectId = needsRegen
+      ? (projects[0]?.id ?? null)
+      : (projects.find((p) => p.id === savedActiveId) ? savedActiveId : (projects[0]?.id ?? null))
+
+    // Resolve expanded IDs (use saved if IDs weren't regenerated)
+    const expandedProjectIds = needsRegen
+      ? new Set(projects[0] ? [projects[0].id] : [])
+      : new Set(savedExpandedIds.filter((id) => projects.some((p) => p.id === id)))
+
+    set({ projects, activeProjectId, expandedProjectIds })
+
+    // Sync active project's preview state to uiStore
+    const activeProject = projects.find((p) => p.id === activeProjectId)
+    if (activeProject) {
+      useUIStore.getState().setPreviewState(
+        activeProject.previewOpen ?? false,
+        activeProject.previewUrl ?? 'http://localhost:3000'
+      )
+    }
+  }
 }))
+
+// Auto-save: subscribe to project changes and persist
+let saveTimeout: ReturnType<typeof setTimeout> | null = null
+useProjectStore.subscribe((state) => {
+  if (saveTimeout) clearTimeout(saveTimeout)
+  saveTimeout = setTimeout(() => {
+    if (state.projects.length > 0) {
+      window.api.saveProjects({
+        projects: state.projects,
+        expandedIds: [...state.expandedProjectIds],
+        activeProjectId: state.activeProjectId
+      })
+    }
+  }, 500)
+})

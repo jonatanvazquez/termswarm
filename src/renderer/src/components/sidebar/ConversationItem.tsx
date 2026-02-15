@@ -1,9 +1,17 @@
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { MessageSquare, Copy, Archive, Trash2, ArchiveRestore, Check, X } from 'lucide-react'
 import type { Conversation } from '../../types'
 import { StatusIndicator } from '../common/StatusIndicator'
-import { useConversationStore } from '../../store/conversationStore'
+import { useConversationStore, checkPendingRename, clearPendingRename, setPendingRenameForNewTab } from '../../store/conversationStore'
 import { useProjectStore } from '../../store/projectStore'
+import { useTerminalStore } from '../../store/terminalStore'
+
+function formatMemory(bytes: number): string {
+  if (bytes >= 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)}G`
+  if (bytes >= 1024 * 1024) return `${Math.round(bytes / (1024 * 1024))}M`
+  if (bytes >= 1024) return `${Math.round(bytes / 1024)}K`
+  return `${bytes}B`
+}
 
 type ConfirmAction = null | 'delete' | 'archive'
 
@@ -22,9 +30,27 @@ export function ConversationItem({ conversation }: ConversationItemProps) {
   const unarchiveConversation = useProjectStore((s) => s.unarchiveConversation)
   const deleteConversation = useProjectStore((s) => s.deleteConversation)
 
-  const [editing, setEditing] = useState(false)
+  const memoryBytes = useTerminalStore((s) => s.memoryBySession[conversation.id] ?? 0)
+
+  const [editing, setEditing] = useState(() => checkPendingRename(conversation.id))
   const [editValue, setEditValue] = useState(conversation.name)
   const [confirming, setConfirming] = useState<ConfirmAction>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
+  const editStartedAtRef = useRef(0)
+
+  // Clear the module-level flag after commit (safe with StrictMode)
+  useEffect(() => {
+    if (checkPendingRename(conversation.id)) {
+      clearPendingRename()
+    }
+  }, [])
+
+  // Track when edit mode starts (for blur protection)
+  useEffect(() => {
+    if (editing) {
+      editStartedAtRef.current = Date.now()
+    }
+  }, [editing])
 
   const isActive = activeTabId === conversation.id
   const needsAttention = conversation.unread && conversation.status !== 'running'
@@ -47,6 +73,19 @@ export function ConversationItem({ conversation }: ConversationItemProps) {
       renameConversation(conversation.id, editValue.trim())
     }
     setEditing(false)
+    // Focus the terminal so the user can start typing immediately
+    setTimeout(() => {
+      useTerminalStore.getState().getTerminal(conversation.id)?.focus()
+    }, 0)
+  }
+
+  const handleRenameBlur = () => {
+    // If blur happens within 300ms of entering edit mode, the terminal stole focus — reclaim it
+    if (Date.now() - editStartedAtRef.current < 300) {
+      requestAnimationFrame(() => inputRef.current?.focus())
+      return
+    }
+    handleRenameSubmit()
   }
 
   const handleRenameKeyDown = (e: React.KeyboardEvent) => {
@@ -56,8 +95,29 @@ export function ConversationItem({ conversation }: ConversationItemProps) {
 
   const handleDuplicate = (e: React.MouseEvent) => {
     e.stopPropagation()
-    const newId = duplicateConversation(conversation.id)
-    if (newId) openTab(newId, conversation.projectId)
+    // Serialize current terminal buffer before duplicating
+    const { serializeBuffer, setPendingContent } = useTerminalStore.getState()
+    const content = serializeBuffer(conversation.id)
+    const result = duplicateConversation(conversation.id)
+    if (result) {
+      if (content) setPendingContent(result.newId, content)
+      setPendingRenameForNewTab(result.newId)
+
+      // Fork the Claude session file so the duplicate is independent
+      if (result.sourceClaudeSessionId && result.newClaudeSessionId) {
+        const project = useProjectStore.getState().projects.find(
+          (p) => p.conversations.some((c) => c.id === result.newId)
+        )
+        if (project) {
+          window.api
+            .claudeForkSession(project.path, result.sourceClaudeSessionId, result.newClaudeSessionId)
+            .then(() => openTab(result.newId, conversation.projectId))
+        }
+      } else {
+        // Terminal — no Claude session to fork
+        setTimeout(() => openTab(result.newId, conversation.projectId), 0)
+      }
+    }
   }
 
   const handleArchiveClick = (e: React.MouseEvent) => {
@@ -96,11 +156,13 @@ export function ConversationItem({ conversation }: ConversationItemProps) {
     return (
       <div className="px-2 py-0.5">
         <input
+          ref={inputRef}
           autoFocus
           value={editValue}
           onChange={(e) => setEditValue(e.target.value)}
           onKeyDown={handleRenameKeyDown}
-          onBlur={handleRenameSubmit}
+          onBlur={handleRenameBlur}
+          onFocus={(e) => e.target.select()}
           className="w-full rounded border border-accent bg-surface-0 px-2 py-1 text-xs text-text-primary outline-none"
         />
       </div>
@@ -159,24 +221,29 @@ export function ConversationItem({ conversation }: ConversationItemProps) {
         {conversation.name}
       </span>
       <span className="ml-auto flex shrink-0 items-center gap-0.5">
+        {memoryBytes > 0 && (
+          <span className="block text-[10px] tabular-nums text-text-secondary/60 group-hover:hidden">
+            {formatMemory(memoryBytes)}
+          </span>
+        )}
         <span
           onClick={handleDuplicate}
           title="Duplicate"
-          className="flex h-4 w-4 items-center justify-center rounded opacity-0 transition-opacity hover:bg-surface-3 group-hover:opacity-100"
+          className="hidden h-4 w-4 items-center justify-center rounded hover:bg-surface-3 group-hover:flex"
         >
           <Copy size={10} />
         </span>
         <span
           onClick={handleArchiveClick}
           title={conversation.archived ? 'Unarchive' : 'Archive'}
-          className="flex h-4 w-4 items-center justify-center rounded opacity-0 transition-opacity hover:bg-surface-3 group-hover:opacity-100"
+          className="hidden h-4 w-4 items-center justify-center rounded hover:bg-surface-3 group-hover:flex"
         >
           {conversation.archived ? <ArchiveRestore size={10} /> : <Archive size={10} />}
         </span>
         <span
           onClick={handleDeleteClick}
           title="Delete"
-          className="flex h-4 w-4 items-center justify-center rounded opacity-0 transition-opacity hover:bg-surface-3 hover:text-error group-hover:opacity-100"
+          className="hidden h-4 w-4 items-center justify-center rounded hover:bg-surface-3 hover:text-error group-hover:flex"
         >
           <Trash2 size={10} />
         </span>

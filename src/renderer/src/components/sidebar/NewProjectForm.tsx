@@ -12,37 +12,63 @@ export function NewProjectForm({ onSubmit, onCancel }: NewProjectFormProps) {
   const [path, setPath] = useState('')
   const [color, setColor] = useState(PROJECT_COLORS[0])
   const nameRef = useRef<HTMLInputElement>(null)
+  const onCancelRef = useRef(onCancel)
+  onCancelRef.current = onCancel
+  const didOpenRef = useRef(false)
 
+  // Auto-open folder picker once on mount (guard against StrictMode double-fire)
   useEffect(() => {
-    nameRef.current?.focus()
+    if (didOpenRef.current) return
+    didOpenRef.current = true
+    ;(async () => {
+      const selected = await window.api.selectDirectory()
+      if (selected) {
+        setPath(selected)
+        const folderName = selected.split('/').pop() || ''
+        setName(folderName)
+        setTimeout(() => nameRef.current?.select(), 50)
+      } else {
+        onCancelRef.current()
+      }
+    })()
   }, [])
 
   const handleBrowse = async () => {
     const selected = await window.api.selectDirectory()
     if (selected) {
       setPath(selected)
-      if (!name) {
-        const folderName = selected.split('/').pop() || ''
-        setName(folderName)
-      }
+      const folderName = selected.split('/').pop() || ''
+      setName(folderName)
+      setTimeout(() => nameRef.current?.select(), 50)
     }
   }
 
   const handleSubmit = () => {
-    if (name.trim()) {
-      const finalPath = path || `~/GitHub/${name.toLowerCase().replace(/\s+/g, '-')}`
-      onSubmit(name.trim(), finalPath, color)
+    if (name.trim() && path) {
+      onSubmit(name.trim(), path, color)
     }
   }
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') handleSubmit()
     else if (e.key === 'Escape') onCancel()
   }
 
+  // Don't render form until folder is selected
+  if (!path) return null
+
   return (
     <div className="mx-1 rounded-lg border border-accent/50 bg-surface-2 p-2.5">
-      {/* Name input */}
+      {/* Folder display + change */}
+      <button
+        onClick={handleBrowse}
+        className="mb-2 flex w-full items-center gap-1.5 rounded border border-border-default bg-surface-0 px-2 py-1 text-left text-xs text-text-secondary hover:border-accent hover:text-text-primary"
+      >
+        <FolderOpen size={11} className="shrink-0" />
+        <span className="min-w-0 flex-1 truncate">{path}</span>
+      </button>
+
+      {/* Name input (auto-filled from folder) */}
       <input
         ref={nameRef}
         value={name}
@@ -51,17 +77,6 @@ export function NewProjectForm({ onSubmit, onCancel }: NewProjectFormProps) {
         placeholder="Project name..."
         className="mb-2 w-full rounded border border-border-default bg-surface-0 px-2 py-1 text-xs text-text-primary outline-none placeholder:text-text-secondary focus:border-accent"
       />
-
-      {/* Folder picker */}
-      <button
-        onClick={handleBrowse}
-        className="mb-2 flex w-full items-center gap-1.5 rounded border border-border-default bg-surface-0 px-2 py-1 text-left text-xs text-text-secondary hover:border-accent hover:text-text-primary"
-      >
-        <FolderOpen size={11} className="shrink-0" />
-        <span className="min-w-0 flex-1 truncate">
-          {path || 'Select folder...'}
-        </span>
-      </button>
 
       {/* Color swatches */}
       <div className="mb-2 flex items-center gap-1">
@@ -88,7 +103,7 @@ export function NewProjectForm({ onSubmit, onCancel }: NewProjectFormProps) {
         </button>
         <button
           onClick={handleSubmit}
-          disabled={!name.trim()}
+          disabled={!name.trim() || !path}
           className="flex items-center gap-1 rounded bg-accent px-2 py-0.5 text-[10px] text-white hover:bg-accent/80 disabled:opacity-40"
         >
           <Check size={10} />

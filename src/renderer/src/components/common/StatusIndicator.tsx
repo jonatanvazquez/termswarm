@@ -1,31 +1,21 @@
+import { Loader2, Check, AlertCircle, Pause } from 'lucide-react'
 import type { ConversationStatus } from '../../types'
 
-const statusColors: Record<ConversationStatus, string> = {
-  running: 'bg-success',
-  waiting: 'bg-warning',
-  idle: 'bg-text-secondary',
-  error: 'bg-error'
-}
-
-const statusPulse: Record<ConversationStatus, boolean> = {
-  running: true,
-  waiting: true,
-  idle: false,
-  error: false
-}
-
 export function StatusIndicator({ status }: { status: ConversationStatus }) {
-  const color = statusColors[status]
-  const pulse = statusPulse[status]
-
   return (
-    <span className="relative flex h-2 w-2 shrink-0">
-      {pulse && (
-        <span
-          className={`absolute inline-flex h-full w-full animate-ping rounded-full opacity-40 ${color}`}
-        />
+    <span className="flex h-3 w-3 shrink-0 items-center justify-center">
+      {status === 'running' && (
+        <Loader2 size={12} className="animate-spin text-success" />
       )}
-      <span className={`relative inline-flex h-2 w-2 rounded-full ${color}`} />
+      {status === 'idle' && <Check size={12} className="text-success" />}
+      {status === 'error' && <AlertCircle size={12} className="text-error" />}
+      {status === 'waiting' && (
+        <span className="relative flex h-2.5 w-2.5">
+          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-warning opacity-40" />
+          <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-warning" />
+        </span>
+      )}
+      {status === 'paused' && <Pause size={12} className="text-text-secondary" />}
     </span>
   )
 }

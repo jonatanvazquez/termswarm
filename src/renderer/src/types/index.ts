@@ -1,4 +1,6 @@
-export type ConversationStatus = 'running' | 'waiting' | 'idle' | 'error'
+export type ConversationStatus = 'running' | 'waiting' | 'idle' | 'error' | 'paused'
+
+export type ConversationType = 'claude' | 'terminal'
 
 export interface Conversation {
   id: string
@@ -9,6 +11,8 @@ export interface Conversation {
   createdAt: string
   unread: boolean
   archived: boolean
+  claudeSessionId?: string
+  type: ConversationType
 }
 
 export interface Project {
@@ -17,6 +21,8 @@ export interface Project {
   path: string
   color: string
   conversations: Conversation[]
+  previewOpen?: boolean
+  previewUrl?: string
 }
 
 export interface Notification {
