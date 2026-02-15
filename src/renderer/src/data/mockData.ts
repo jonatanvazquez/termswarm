@@ -15,7 +15,8 @@ export const mockProjects: Project[] = [
         lastMessage: '> Running test suite... 42 tests passed',
         createdAt: '2026-02-14T09:00:00Z',
         unread: false,
-        archived: false
+        archived: false,
+        type: 'claude'
       },
       {
         id: 'conv-gc-2',
@@ -25,7 +26,8 @@ export const mockProjects: Project[] = [
         lastMessage: '✓ Webhook endpoint created at /api/webhooks/stripe',
         createdAt: '2026-02-13T14:00:00Z',
         unread: true,
-        archived: false
+        archived: false,
+        type: 'claude'
       }
     ]
   },
@@ -43,7 +45,8 @@ export const mockProjects: Project[] = [
         lastMessage: '> Optimizing matching algorithm with geospatial index...',
         createdAt: '2026-02-14T08:30:00Z',
         unread: false,
-        archived: false
+        archived: false,
+        type: 'claude'
       },
       {
         id: 'conv-ca-2',
@@ -53,7 +56,8 @@ export const mockProjects: Project[] = [
         lastMessage: '? Which chart library do you prefer for the analytics panel?',
         createdAt: '2026-02-14T10:00:00Z',
         unread: true,
-        archived: false
+        archived: false,
+        type: 'claude'
       },
       {
         id: 'conv-ca-3',
@@ -63,7 +67,8 @@ export const mockProjects: Project[] = [
         lastMessage: '✗ Firebase credentials expired. Update FIREBASE_KEY in .env',
         createdAt: '2026-02-12T16:00:00Z',
         unread: true,
-        archived: false
+        archived: false,
+        type: 'claude'
       }
     ]
   },
@@ -81,7 +86,8 @@ export const mockProjects: Project[] = [
         lastMessage: '> Migrating 23 components to new renderer...',
         createdAt: '2026-02-14T07:00:00Z',
         unread: false,
-        archived: false
+        archived: false,
+        type: 'claude'
       },
       {
         id: 'conv-ah-2',
@@ -91,7 +97,8 @@ export const mockProjects: Project[] = [
         lastMessage: '✓ Rate limiter middleware added: 100 req/min per user',
         createdAt: '2026-02-11T09:00:00Z',
         unread: true,
-        archived: false
+        archived: false,
+        type: 'claude'
       }
     ]
   },
@@ -109,7 +116,8 @@ export const mockProjects: Project[] = [
         lastMessage: '? Should the AI suggest restaurants based on dietary preferences?',
         createdAt: '2026-02-14T11:00:00Z',
         unread: true,
-        archived: false
+        archived: false,
+        type: 'claude'
       }
     ]
   },
@@ -127,7 +135,8 @@ export const mockProjects: Project[] = [
         lastMessage: '✓ Encoding pipeline reduced from 45s to 12s per clip',
         createdAt: '2026-02-13T18:00:00Z',
         unread: true,
-        archived: false
+        archived: false,
+        type: 'claude'
       },
       {
         id: 'conv-sw-2',
@@ -136,7 +145,9 @@ export const mockProjects: Project[] = [
         status: 'running',
         lastMessage: '> Training epoch 14/50 — accuracy: 94.2%',
         createdAt: '2026-02-14T06:00:00Z',
-        unread: false
+        unread: false,
+        archived: false,
+        type: 'claude'
       }
     ]
   },
@@ -154,7 +165,8 @@ export const mockProjects: Project[] = [
         lastMessage: '✓ Pipeline: Ideacion → Mercado → Estrategia → Formatos',
         createdAt: '2026-02-10T12:00:00Z',
         unread: false,
-        archived: false
+        archived: false,
+        type: 'claude'
       },
       {
         id: 'conv-ha-2',
@@ -164,7 +176,8 @@ export const mockProjects: Project[] = [
         lastMessage: '✗ WaveSpeed upstream credits exhausted',
         createdAt: '2026-02-13T20:00:00Z',
         unread: true,
-        archived: false
+        archived: false,
+        type: 'claude'
       }
     ]
   }

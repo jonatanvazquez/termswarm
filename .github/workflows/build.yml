@@ -14,7 +14,7 @@ permissions:
   contents: write
 
 jobs:
-  # ─── macOS (universal: ARM + Intel) ────────────────────────────────
+  # ─── macOS (ARM + Intel, separate binaries) ────────────────────────
   build-mac:
     runs-on: macos-latest
     steps:
@@ -51,7 +51,8 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: npm run build:mac
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: electron-vite build && electron-builder --mac --publish never
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -77,7 +78,9 @@ jobs:
         run: npm ci
 
       - name: Build
-        run: npm run build:win
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx electron-vite build && npx electron-builder --win --publish never
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -102,7 +105,9 @@ jobs:
         run: npm ci
 
       - name: Build
-        run: npm run build:linux
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx electron-vite build && npx electron-builder --linux --publish never
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4

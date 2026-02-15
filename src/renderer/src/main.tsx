@@ -9,8 +9,8 @@ import './app.css'
 // We use the Navigation API to intercept reload navigations. location.reload() is
 // [Unforgeable] in WebIDL and can't be overridden, but the Navigation API CAN
 // preventDefault() on navigate events.
-if (import.meta.env.DEV && typeof navigation !== 'undefined') {
-  navigation.addEventListener('navigate', (event) => {
+if (import.meta.env.DEV && typeof (window as any).navigation !== 'undefined') {
+  ;(window as any).navigation.addEventListener('navigate', (event: any) => {
     if (event.navigationType === 'reload') {
       event.preventDefault()
       console.warn('[TermSwarm] Blocked Vite page reload (network service recovery)')
