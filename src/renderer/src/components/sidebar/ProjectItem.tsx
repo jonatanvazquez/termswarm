@@ -15,6 +15,7 @@ import {
 import type { Project, ConversationType } from '../../types'
 import { useProjectStore } from '../../store/projectStore'
 import { useConversationStore, setPendingRenameForNewTab } from '../../store/conversationStore'
+import { useUIStore } from '../../store/uiStore'
 import { ConversationItem } from './ConversationItem'
 
 interface ProjectItemProps {
@@ -32,6 +33,7 @@ export function ProjectItem({ project }: ProjectItemProps) {
   const showArchived = useProjectStore((s) => s.showArchived)
   const openTab = useConversationStore((s) => s.openTab)
   const closeTab = useConversationStore((s) => s.closeTab)
+  const conversationFilter = useUIStore((s) => s.conversationFilter)
 
   const [editing, setEditing] = useState(false)
   const [editValue, setEditValue] = useState(project.name)
@@ -48,6 +50,14 @@ export function ProjectItem({ project }: ProjectItemProps) {
   const archivedConversations = project.conversations.filter((c) => c.archived)
   const runningCount = activeConversations.filter((c) => c.status === 'running').length
   const unreadCount = activeConversations.filter((c) => c.unread && c.status !== 'running').length
+  const visibleConversations =
+    conversationFilter === 'unanswered'
+      ? activeConversations.filter((c) => c.status === 'waiting')
+      : conversationFilter === 'working'
+        ? activeConversations.filter((c) => c.status === 'running')
+        : conversationFilter === 'unread'
+          ? activeConversations.filter((c) => c.unread && c.status !== 'running')
+          : activeConversations
 
   // Close menu on click outside
   useEffect(() => {
@@ -259,7 +269,7 @@ export function ProjectItem({ project }: ProjectItemProps) {
 
       {isExpanded && (
         <div className="ml-4 mt-0.5 flex flex-col gap-0.5 border-l border-border-default pl-2">
-          {activeConversations.map((conv) => (
+          {visibleConversations.map((conv) => (
             <ConversationItem key={conv.id} conversation={conv} />
           ))}
           {showArchived && archivedConversations.length > 0 && (

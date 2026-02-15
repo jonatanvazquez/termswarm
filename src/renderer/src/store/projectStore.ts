@@ -26,6 +26,7 @@ interface ProjectState {
   deleteConversation: (conversationId: string) => void
   duplicateConversation: (conversationId: string) => { newId: string; sourceClaudeSessionId?: string; newClaudeSessionId?: string } | null
   markConversationRead: (conversationId: string) => void
+  markConversationUnread: (conversationId: string) => void
   setConversationStatus: (conversationId: string, status: ConversationStatus) => void
   setProjectPreview: (projectId: string, previewOpen: boolean, previewUrl: string) => void
   loadFromDisk: () => Promise<void>
@@ -218,6 +219,16 @@ export const useProjectStore = create<ProjectState>((set) => ({
         ...p,
         conversations: p.conversations.map((c) =>
           c.id === conversationId ? { ...c, unread: false } : c
+        )
+      }))
+    })),
+
+  markConversationUnread: (conversationId) =>
+    set((state) => ({
+      projects: state.projects.map((p) => ({
+        ...p,
+        conversations: p.conversations.map((c) =>
+          c.id === conversationId ? { ...c, unread: true } : c
         )
       }))
     })),

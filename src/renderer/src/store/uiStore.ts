@@ -19,6 +19,7 @@ interface UIState {
   previewWidth: number
   gitPanelCollapsed: boolean
   gitPanelHeight: number
+  conversationFilter: 'all' | 'unanswered' | 'working' | 'unread'
   toggleSidebar: () => void
   setSidebarWidth: (w: number) => void
   startAddingProject: () => void
@@ -32,6 +33,7 @@ interface UIState {
   setPreviewState: (open: boolean, url: string) => void
   toggleGitPanel: () => void
   setGitPanelHeight: (h: number) => void
+  setConversationFilter: (filter: 'all' | 'unanswered' | 'working' | 'unread') => void
   loadFromDisk: () => Promise<void>
 }
 
@@ -46,6 +48,7 @@ export const useUIStore = create<UIState>((set) => ({
   previewWidth: 500,
   gitPanelCollapsed: false,
   gitPanelHeight: 200,
+  conversationFilter: 'all',
   toggleSidebar: () => set((state) => ({ sidebarCollapsed: !state.sidebarCollapsed })),
   setSidebarWidth: (w) => set({ sidebarWidth: w }),
   startAddingProject: () => set({ addingProject: true }),
@@ -68,6 +71,7 @@ export const useUIStore = create<UIState>((set) => ({
   setPreviewState: (open, url) => set({ previewOpen: open, previewUrl: url }),
   toggleGitPanel: () => set((state) => ({ gitPanelCollapsed: !state.gitPanelCollapsed })),
   setGitPanelHeight: (h) => set({ gitPanelHeight: h }),
+  setConversationFilter: (filter) => set({ conversationFilter: filter }),
 
   loadFromDisk: async () => {
     const raw = await window.api.loadUILayout()

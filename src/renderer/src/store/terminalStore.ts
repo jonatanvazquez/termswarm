@@ -2,6 +2,9 @@ import { create } from 'zustand'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebglAddon } from '@xterm/addon-webgl'
+import { useUIStore } from './uiStore'
+import { useProjectStore } from './projectStore'
+import { useConversationStore } from './conversationStore'
 
 interface TerminalInstance {
   terminal: Terminal
@@ -118,6 +121,38 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     // Wire user input → PTY
     terminal.onData((data) => {
       window.api.ptyWrite(conversationId, data)
+
+      // Auto-advance for 'unread' filter: mark read + jump to next unread.
+      // Self-debounces because markConversationRead flips the flag synchronously.
+      // ('unanswered' auto-advance lives in usePtyListener, triggered by waiting→running.)
+      const { conversationFilter } = useUIStore.getState()
+      if (conversationFilter === 'unread') {
+        const projectStore = useProjectStore.getState()
+        let isUnread = false
+        for (const p of projectStore.projects) {
+          const c = p.conversations.find((c) => c.id === conversationId)
+          if (c?.unread) { isUnread = true; break }
+        }
+        if (isUnread) {
+          projectStore.markConversationRead(conversationId)
+          let nextId: string | null = null
+          let nextProjectId: string | null = null
+          for (const p of projectStore.projects) {
+            for (const c of p.conversations) {
+              if (!c.archived && c.unread && c.status !== 'running' && c.id !== conversationId) {
+                nextId = c.id
+                nextProjectId = p.id
+                break
+              }
+            }
+            if (nextId) break
+          }
+          if (nextId && nextProjectId) {
+            const { openTab } = useConversationStore.getState()
+            setTimeout(() => openTab(nextId!, nextProjectId!), 100)
+          }
+        }
+      }
     })
 
     // Report initial size

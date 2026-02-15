@@ -141,7 +141,7 @@ class PtyManager {
       promptDetectedAt: null,
       belReceived: false,
       status: 'running',
-      awaitingResponse: true,
+      awaitingResponse: false,
       mode
     }
 
@@ -180,8 +180,9 @@ class PtyManager {
           session.promptDetectedAt = null
         }
 
-        // Recovery: if we were 'waiting' but prompt disappeared, Claude resumed work
-        if (session.status === 'waiting' && !session.promptDetected) {
+        // Recovery: if we were 'waiting' but prompt disappeared, Claude resumed work.
+        // Gate behind awaitingResponse so typing on the prompt doesn't flicker to 'running'.
+        if (session.status === 'waiting' && !session.promptDetected && session.awaitingResponse) {
           session.status = 'running'
           session.belReceived = false
           this.sendStatus(sessionId, 'running')
@@ -310,21 +311,31 @@ class PtyManager {
           // Claude mode: detect when Claude is waiting for input
           const sincePrompt = session.promptDetectedAt !== null ? now - session.promptDetectedAt : null
           if (session.belReceived && session.promptDetected) {
+            // BEL + prompt: Claude rang the bell — task finished
             session.status = 'waiting'
             session.awaitingResponse = false
             this.sendStatus(sessionId, 'waiting')
-          } else if (session.promptDetected && elapsed > 500) {
-            session.status = 'waiting'
-            session.awaitingResponse = false
-            this.sendStatus(sessionId, 'waiting')
-          } else if (sincePrompt !== null && sincePrompt > 3000) {
-            session.status = 'waiting'
-            session.awaitingResponse = false
-            this.sendStatus(sessionId, 'waiting')
-          } else if (!session.promptDetected && elapsed > 10000) {
-            session.status = 'waiting'
-            session.awaitingResponse = false
-            this.sendStatus(sessionId, 'waiting')
+          } else if (session.awaitingResponse) {
+            // After submission: only trust prompt + generous silence (5s).
+            // During active processing Claude produces output regularly,
+            // so 5s of silence with prompt visible = task finished.
+            if (session.promptDetected && elapsed > 5000) {
+              session.status = 'waiting'
+              session.awaitingResponse = false
+              this.sendStatus(sessionId, 'waiting')
+            }
+          } else {
+            // Initial startup (before first Enter): use normal heuristics
+            if (session.promptDetected && elapsed > 500) {
+              session.status = 'waiting'
+              this.sendStatus(sessionId, 'waiting')
+            } else if (sincePrompt !== null && sincePrompt > 3000) {
+              session.status = 'waiting'
+              this.sendStatus(sessionId, 'waiting')
+            } else if (!session.promptDetected && elapsed > 10000) {
+              session.status = 'waiting'
+              this.sendStatus(sessionId, 'waiting')
+            }
           }
         }
       }

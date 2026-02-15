@@ -123,6 +123,7 @@ export const useConversationStore = create<ConversationState>((set) => ({
           projectStore.setActiveProject(tab.projectId)
         }
       }
+      useProjectStore.getState().markConversationRead(conversationId)
       return { activeTabId: conversationId }
     })
 }))
