@@ -153,6 +153,5 @@ jobs:
           gh release create "$TAG" \
             --title "$TAG" \
             --generate-notes \
-            --draft \
             artifacts/* \
           || gh release upload "$TAG" artifacts/* --clobber
