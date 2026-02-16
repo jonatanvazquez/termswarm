@@ -1,13 +1,10 @@
 import { useRef, useCallback, useState } from 'react'
 import { XTerminal } from '../terminal/XTerminal'
-import { NotificationPanel } from '../notifications/NotificationPanel'
 import { WebPreview } from '../preview/WebPreview'
-import { useNotificationStore } from '../../store/notificationStore'
 import { useUIStore } from '../../store/uiStore'
 import { useConversationStore } from '../../store/conversationStore'
 
 export function MainArea() {
-  const panelOpen = useNotificationStore((s) => s.panelOpen)
   const terminalHidden = useUIStore((s) => s.terminalHidden)
   const previewOpen = useUIStore((s) => s.previewOpen)
   const previewWidth = useUIStore((s) => s.previewWidth)
@@ -73,28 +70,27 @@ export function MainArea() {
         </div>
       </div>
 
-      {/* Drag handle + Preview side */}
-      {previewOpen && (
-        <>
-          {!terminalHidden && (
-            <div
-              onMouseDown={handleMouseDown}
-              className="group flex w-1 shrink-0 cursor-col-resize items-center justify-center hover:bg-accent/30"
-            >
-              <div className="h-8 w-0.5 rounded-full bg-border-default transition-colors group-hover:bg-accent" />
-            </div>
-          )}
-          <div
-            className="flex shrink-0"
-            style={{ width: terminalHidden ? '100%' : previewWidth }}
-          >
-            <WebPreview />
-          </div>
-        </>
+      {/* Drag handle — only when preview visible */}
+      {previewOpen && !terminalHidden && (
+        <div
+          onMouseDown={handleMouseDown}
+          className="group flex w-1 shrink-0 cursor-col-resize items-center justify-center hover:bg-accent/30"
+        >
+          <div className="h-8 w-0.5 rounded-full bg-border-default transition-colors group-hover:bg-accent" />
+        </div>
       )}
 
-      {/* Notification overlay */}
-      {panelOpen && <NotificationPanel />}
+      {/* Preview container — always rendered for webview persistence, hidden via CSS */}
+      <div
+        className="flex shrink-0"
+        style={{
+          display: previewOpen ? 'flex' : 'none',
+          width: terminalHidden ? '100%' : previewWidth
+        }}
+      >
+        <WebPreview />
+      </div>
+
     </div>
   )
 }

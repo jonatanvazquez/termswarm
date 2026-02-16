@@ -1,5 +1,6 @@
 import { useRef, useCallback, useState } from 'react'
 import { TitleBar } from './TitleBar'
+import { UpdateBanner } from '../common/UpdateBanner'
 import { Sidebar } from './Sidebar'
 import { MainArea } from './MainArea'
 import { StatusBar } from './StatusBar'
@@ -40,6 +41,7 @@ export function AppLayout() {
   return (
     <div className="flex h-full flex-col bg-surface-0">
       <TitleBar />
+      <UpdateBanner />
       <div className="flex min-h-0 flex-1">
         <Sidebar />
         {/* Sidebar resize handle */}

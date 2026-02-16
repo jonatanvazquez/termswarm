@@ -2,6 +2,12 @@ import { contextBridge, ipcRenderer, webFrame } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
 import type { ConversationStatus } from '../shared/types'
 import type { GitStatusResult, GitLogResult, GitPullResult } from '../shared/gitTypes'
+import type {
+  AndroidEmulator,
+  IOSSimulator,
+  EmulatorListResult
+} from '../shared/emulatorTypes'
+import type { UpdateStatus } from '../shared/updateTypes'
 
 type CleanupFn = () => void
 
@@ -104,6 +110,36 @@ const api = {
   gitCommit: (cwd: string, message: string): Promise<void> =>
     ipcRenderer.invoke('git:commit', cwd, message),
   gitPull: (cwd: string): Promise<GitPullResult> => ipcRenderer.invoke('git:pull', cwd),
+
+  // Emulators
+  platform: process.platform,
+  emulatorListAndroid: (): Promise<EmulatorListResult<AndroidEmulator>> =>
+    ipcRenderer.invoke('emulator:listAndroid'),
+  emulatorLaunchAndroid: (
+    avdName: string
+  ): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('emulator:launchAndroid', avdName),
+  emulatorListIOS: (): Promise<EmulatorListResult<IOSSimulator>> =>
+    ipcRenderer.invoke('emulator:listIOS'),
+  emulatorLaunchIOS: (udid: string): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('emulator:launchIOS', udid),
+  emulatorOpenAndroidManager: (): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('emulator:openAndroidManager'),
+  emulatorOpenIOSManager: (): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('emulator:openIOSManager'),
+
+  // Updater
+  updaterGetStatus: (): Promise<UpdateStatus> => ipcRenderer.invoke('updater:getStatus'),
+  updaterCheck: (): Promise<void> => ipcRenderer.invoke('updater:check'),
+  updaterDownload: (): Promise<void> => ipcRenderer.invoke('updater:download'),
+  updaterInstall: (): Promise<void> => ipcRenderer.invoke('updater:install'),
+  onUpdaterStatus: (callback: (status: UpdateStatus) => void): CleanupFn => {
+    const handler = (_e: Electron.IpcRendererEvent, status: UpdateStatus): void => {
+      callback(status)
+    }
+    ipcRenderer.on('updater:status', handler)
+    return () => ipcRenderer.removeListener('updater:status', handler)
+  },
 
   // Zoom (Electron-native, works with canvas/WebGL)
   setZoomFactor: (factor: number): void => {

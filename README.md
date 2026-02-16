@@ -28,17 +28,21 @@ Working with multiple projects means juggling dozens of terminal windows, losing
 
 ## Key Features
 
-**Multi-Project Organization** — Group your terminal sessions by project with color-coded labels. Collapse, expand, and switch between projects instantly.
+**Multi-Project Organization** — Group your terminal sessions by project with color-coded labels. Filter conversations, track unread activity, and switch context in a single click.
 
-**Claude Code Integration** — Spawn Claude Code sessions inside any project directory. Fork sessions to explore different approaches while keeping the original context. Real-time status detection (running, waiting, idle, paused).
+**Claude Code Integration** — Spawn Claude Code sessions inside any project directory. Fork conversations to explore different approaches while keeping the original context. Real-time status detection (running, waiting, idle, paused).
 
 **Built-in Terminal** — Full terminal emulator powered by xterm.js with WebGL rendering. Run any shell command just like your regular terminal.
 
 **Git Panel** — See branch info, staged/unstaged changes, and untracked files at a glance. Stage, unstage, commit, and pull without leaving the app.
 
-**Web Preview** — Preview your dev servers in a built-in browser pane. Toggle between desktop and mobile viewports. Auto-detects running servers.
+**Web Preview** — Multi-tab browser pane with desktop and mobile viewports. Select DOM elements and send them straight to Claude. Built-in console panel. Webviews persist across project switches — no reloads when you come back.
 
-**Session Persistence** — Your projects, terminal buffers, settings, and UI layout are saved automatically and restored when you reopen the app.
+**Session Persistence** — Projects, terminal buffers, webview state, settings, and UI layout are saved automatically and restored when you reopen the app.
+
+**Live Status & Control** — See which sessions are running, waiting, idle, or errored at a glance. Pause, resume, or kill any process with a single click.
+
+**Auto-Updates** — Built-in update system checks for new releases and lets you install them without leaving the app.
 
 ## Tech Stack
 
@@ -77,7 +81,7 @@ npm run dev
 
 ### Download Pre-built App
 
-Go to [Releases](https://github.com/jonatanvazquez/termswarm/releases) to download the latest macOS DMG. Windows and Linux builds coming soon.
+Go to [Releases](https://github.com/jonatanvazquez/termswarm/releases) to download the latest build for macOS (.dmg), Windows (.exe), or Linux (.AppImage).
 
 ## Available Scripts
 
@@ -101,7 +105,9 @@ src/
 │   ├── index.ts            # Window creation, IPC handlers
 │   ├── ptyManager.ts       # Terminal session lifecycle & status detection
 │   ├── gitManager.ts       # Git operations wrapper
-│   └── persistence.ts      # Save/load projects, buffers, settings
+│   ├── persistence.ts      # Save/load projects, buffers, settings
+│   ├── updateManager.ts    # Auto-update checking & installation
+│   └── emulatorManager.ts  # Device emulator integration
 ├── preload/
 │   └── index.ts            # Context bridge — secure API for renderer
 ├── renderer/src/           # React frontend
@@ -110,11 +116,10 @@ src/
 │   │   ├── layout/         # AppLayout, Sidebar, TitleBar, StatusBar
 │   │   ├── terminal/       # xterm.js wrapper
 │   │   ├── sidebar/        # Project tree, Git panel
-│   │   ├── preview/        # Built-in web preview
-│   │   ├── notifications/  # Notification system
+│   │   ├── preview/        # Web preview, console panel, DOM selector
 │   │   ├── settings/       # Settings panel
 │   │   └── common/         # Reusable UI components
-│   ├── store/              # Zustand stores (7 stores)
+│   ├── store/              # Zustand stores
 │   ├── hooks/              # Custom React hooks
 │   └── types/              # TypeScript interfaces
 └── shared/                 # Types shared between main & renderer

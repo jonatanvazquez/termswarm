@@ -6,6 +6,7 @@ import {
   Folder,
   Plus,
   Archive,
+  ArchiveRestore,
   Trash2,
   Check,
   X,
@@ -20,9 +21,11 @@ import { ConversationItem } from './ConversationItem'
 
 interface ProjectItemProps {
   project: Project
+  isArchived?: boolean
+  forceExpanded?: boolean
 }
 
-export function ProjectItem({ project }: ProjectItemProps) {
+export function ProjectItem({ project, isArchived, forceExpanded }: ProjectItemProps) {
   const expandedIds = useProjectStore((s) => s.expandedProjectIds)
   const toggleExpanded = useProjectStore((s) => s.toggleProjectExpanded)
   const activeProjectId = useProjectStore((s) => s.activeProjectId)
@@ -30,6 +33,8 @@ export function ProjectItem({ project }: ProjectItemProps) {
   const addConversation = useProjectStore((s) => s.addConversation)
   const renameProject = useProjectStore((s) => s.renameProject)
   const deleteProject = useProjectStore((s) => s.deleteProject)
+  const archiveProject = useProjectStore((s) => s.archiveProject)
+  const unarchiveProject = useProjectStore((s) => s.unarchiveProject)
   const showArchived = useProjectStore((s) => s.showArchived)
   const openTab = useConversationStore((s) => s.openTab)
   const closeTab = useConversationStore((s) => s.closeTab)
@@ -38,21 +43,25 @@ export function ProjectItem({ project }: ProjectItemProps) {
   const [editing, setEditing] = useState(false)
   const [editValue, setEditValue] = useState(project.name)
   const [confirmingDelete, setConfirmingDelete] = useState(false)
+  const [confirmingArchive, setConfirmingArchive] = useState(false)
   const [showNewMenu, setShowNewMenu] = useState(false)
   const [menuPos, setMenuPos] = useState({ top: 0, left: 0 })
   const plusRef = useRef<HTMLSpanElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
 
-  const isExpanded = expandedIds.has(project.id)
+  const isExpanded = forceExpanded || expandedIds.has(project.id)
   const isActive = activeProjectId === project.id
 
   const activeConversations = project.conversations.filter((c) => !c.archived)
   const archivedConversations = project.conversations.filter((c) => c.archived)
-  const runningCount = activeConversations.filter((c) => c.status === 'running').length
+  const waitingCount = activeConversations.filter((c) => c.status === 'waiting').length
   const unreadCount = activeConversations.filter((c) => c.unread && c.status !== 'running').length
-  const visibleConversations =
-    conversationFilter === 'unanswered'
-      ? activeConversations.filter((c) => c.status === 'waiting')
+  const visibleConversations = isArchived
+    ? []
+    : conversationFilter === 'unanswered'
+      ? activeConversations
+          .filter((c) => c.status === 'waiting')
+          .sort((a, b) => (a.waitingSince ?? '').localeCompare(b.waitingSince ?? ''))
       : conversationFilter === 'working'
         ? activeConversations.filter((c) => c.status === 'running')
         : conversationFilter === 'unread'
@@ -72,7 +81,7 @@ export function ProjectItem({ project }: ProjectItemProps) {
   }, [showNewMenu])
 
   const handleClick = () => {
-    if (confirmingDelete) return
+    if (confirmingDelete || confirmingArchive) return
     if (isActive) {
       toggleExpanded(project.id)
     } else {
@@ -146,6 +155,26 @@ export function ProjectItem({ project }: ProjectItemProps) {
     setConfirmingDelete(false)
   }
 
+  const handleArchiveClick = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (isArchived) {
+      unarchiveProject(project.id)
+    } else {
+      setConfirmingArchive(true)
+    }
+  }
+
+  const handleConfirmArchive = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    archiveProject(project.id)
+    setConfirmingArchive(false)
+  }
+
+  const handleCancelArchive = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    setConfirmingArchive(false)
+  }
+
   if (confirmingDelete) {
     const count = project.conversations.length
     return (
@@ -173,8 +202,35 @@ export function ProjectItem({ project }: ProjectItemProps) {
     )
   }
 
+  if (confirmingArchive) {
+    const count = project.conversations.length
+    return (
+      <div className="flex items-center justify-between rounded bg-warning/10 px-2 py-1.5 text-xs">
+        <span className="text-warning">
+          Archive {project.name}? ({count} {count === 1 ? 'session' : 'sessions'})
+        </span>
+        <div className="flex items-center gap-1">
+          <button
+            onClick={handleConfirmArchive}
+            className="flex h-5 items-center gap-1 rounded bg-warning px-1.5 text-[10px] font-medium text-white hover:bg-warning/80"
+          >
+            <Check size={10} />
+            Yes
+          </button>
+          <button
+            onClick={handleCancelArchive}
+            className="flex h-5 items-center gap-1 rounded bg-surface-3 px-1.5 text-[10px] font-medium text-text-secondary hover:bg-surface-2"
+          >
+            <X size={10} />
+            No
+          </button>
+        </div>
+      </div>
+    )
+  }
+
   return (
-    <div>
+    <div className={isArchived ? 'opacity-50' : ''}>
       <button
         onClick={handleClick}
         onDoubleClick={handleDoubleClick}
@@ -207,13 +263,22 @@ export function ProjectItem({ project }: ProjectItemProps) {
           <span className="truncate font-medium">{project.name}</span>
         )}
         <span className="ml-auto flex items-center gap-1">
+          {!isArchived && (
+            <span
+              ref={plusRef}
+              onClick={handlePlusClick}
+              title="New session"
+              className="flex h-4 w-4 items-center justify-center rounded opacity-0 transition-opacity hover:bg-surface-3 group-hover:opacity-100"
+            >
+              <Plus size={12} />
+            </span>
+          )}
           <span
-            ref={plusRef}
-            onClick={handlePlusClick}
-            title="New session"
+            onClick={handleArchiveClick}
+            title={isArchived ? 'Unarchive project' : 'Archive project'}
             className="flex h-4 w-4 items-center justify-center rounded opacity-0 transition-opacity hover:bg-surface-3 group-hover:opacity-100"
           >
-            <Plus size={12} />
+            {isArchived ? <ArchiveRestore size={10} /> : <Archive size={10} />}
           </span>
           <span
             onClick={handleDeleteClick}
@@ -222,14 +287,14 @@ export function ProjectItem({ project }: ProjectItemProps) {
           >
             <Trash2 size={10} />
           </span>
-          {unreadCount > 0 && (
+          {!isArchived && unreadCount > 0 && (
             <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-warning/20 px-1 text-[10px] font-medium text-warning">
               {unreadCount}
             </span>
           )}
-          {runningCount > 0 && (
-            <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-success/20 px-1 text-[10px] font-medium text-success">
-              {runningCount}
+          {!isArchived && waitingCount > 0 && (
+            <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-warning/20 px-1 text-[10px] font-medium text-warning">
+              {waitingCount}
             </span>
           )}
         </span>
@@ -272,16 +337,26 @@ export function ProjectItem({ project }: ProjectItemProps) {
           {visibleConversations.map((conv) => (
             <ConversationItem key={conv.id} conversation={conv} />
           ))}
-          {showArchived && archivedConversations.length > 0 && (
-            <div className="mt-1">
-              <div className="flex items-center gap-1 px-2 py-1 text-[10px] text-text-secondary">
-                <Archive size={9} />
-                <span>Archived ({archivedConversations.length})</span>
+          {isArchived ? (
+            archivedConversations.length > 0 && (
+              <>
+                {archivedConversations.map((conv) => (
+                  <ConversationItem key={conv.id} conversation={conv} />
+                ))}
+              </>
+            )
+          ) : (
+            showArchived && archivedConversations.length > 0 && (
+              <div className="mt-1">
+                <div className="flex items-center gap-1 px-2 py-1 text-[10px] text-text-secondary">
+                  <Archive size={9} />
+                  <span>Archived ({archivedConversations.length})</span>
+                </div>
+                {archivedConversations.map((conv) => (
+                  <ConversationItem key={conv.id} conversation={conv} />
+                ))}
               </div>
-              {archivedConversations.map((conv) => (
-                <ConversationItem key={conv.id} conversation={conv} />
-              ))}
-            </div>
+            )
           )}
         </div>
       )}

@@ -1,4 +1,4 @@
-import type { Project, Notification } from '../types'
+import type { Project } from '../types'
 
 export const mockProjects: Project[] = [
   {
@@ -180,49 +180,6 @@ export const mockProjects: Project[] = [
         type: 'claude'
       }
     ]
-  }
-]
-
-export const mockNotifications: Notification[] = [
-  {
-    id: 'notif-1',
-    conversationId: 'conv-gc-1',
-    projectName: 'GoClaw',
-    conversationName: 'Fix claw scheduling bug',
-    message: 'All 42 tests passed successfully',
-    type: 'success',
-    read: false,
-    timestamp: '2026-02-14T13:15:00Z'
-  },
-  {
-    id: 'notif-2',
-    conversationId: 'conv-ca-3',
-    projectName: 'CabgoAI',
-    conversationName: 'Push notification service',
-    message: 'Firebase credentials expired',
-    type: 'error',
-    read: false,
-    timestamp: '2026-02-14T12:30:00Z'
-  },
-  {
-    id: 'notif-3',
-    conversationId: 'conv-ca-2',
-    projectName: 'CabgoAI',
-    conversationName: 'Driver dashboard UI',
-    message: 'Waiting for input: chart library preference',
-    type: 'warning',
-    read: false,
-    timestamp: '2026-02-14T12:00:00Z'
-  },
-  {
-    id: 'notif-4',
-    conversationId: 'conv-ah-1',
-    projectName: 'Apphive',
-    conversationName: 'Refactor component engine',
-    message: 'Migration progress: 18/23 components done',
-    type: 'info',
-    read: true,
-    timestamp: '2026-02-14T11:00:00Z'
   }
 ]
 

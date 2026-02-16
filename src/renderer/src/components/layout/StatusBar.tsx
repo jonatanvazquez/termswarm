@@ -1,13 +1,9 @@
-import { Bell, Activity } from 'lucide-react'
+import { Activity } from 'lucide-react'
 import { useProjectStore } from '../../store/projectStore'
-import { useNotificationStore } from '../../store/notificationStore'
-import { Badge } from '../common/Badge'
 import type { ConversationStatus } from '../../types'
 
 export function StatusBar() {
   const projects = useProjectStore((s) => s.projects)
-  const togglePanel = useNotificationStore((s) => s.togglePanel)
-  const unreadCount = useNotificationStore((s) => s.unreadCount)
 
   const allConversations = projects.flatMap((p) => p.conversations)
 
@@ -20,7 +16,7 @@ export function StatusBar() {
   )
 
   return (
-    <div className="flex h-[var(--spacing-statusbar)] items-center justify-between border-t border-border-default bg-surface-1 px-3 text-[11px]">
+    <div className="flex h-[var(--spacing-statusbar)] items-center border-t border-border-default bg-surface-1 px-3 text-[11px]">
       <div className="flex items-center gap-3">
         <Activity size={12} className="text-accent" />
         <span className="flex items-center gap-1.5">
@@ -42,14 +38,6 @@ export function StatusBar() {
           </span>
         )}
       </div>
-
-      <button
-        onClick={togglePanel}
-        className="relative flex items-center gap-1.5 rounded px-1.5 py-0.5 text-text-secondary transition-colors hover:bg-surface-3 hover:text-text-primary"
-      >
-        <Bell size={12} />
-        <Badge count={unreadCount()} />
-      </button>
     </div>
   )
 }

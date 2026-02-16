@@ -13,6 +13,12 @@ export interface Conversation {
   archived: boolean
   claudeSessionId?: string
   type: ConversationType
+  waitingSince?: string
+}
+
+export interface BrowserTab {
+  id: string
+  url: string
 }
 
 export interface Project {
@@ -23,17 +29,9 @@ export interface Project {
   conversations: Conversation[]
   previewOpen?: boolean
   previewUrl?: string
-}
-
-export interface Notification {
-  id: string
-  conversationId: string
-  projectName: string
-  conversationName: string
-  message: string
-  type: 'info' | 'success' | 'warning' | 'error'
-  read: boolean
-  timestamp: string
+  previewTabs?: BrowserTab[]
+  activePreviewTabId?: string
+  archived?: boolean
 }
 
 export interface Tab {

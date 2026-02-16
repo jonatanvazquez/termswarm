@@ -1,4 +1,5 @@
-import { FolderPlus } from 'lucide-react'
+import { useMemo } from 'react'
+import { FolderPlus, Archive } from 'lucide-react'
 import { useProjectStore } from '../../store/projectStore'
 import { useUIStore } from '../../store/uiStore'
 import { useConversationStore } from '../../store/conversationStore'
@@ -14,6 +15,9 @@ export function ProjectList() {
   const startAdding = useUIStore((s) => s.startAddingProject)
   const stopAdding = useUIStore((s) => s.stopAddingProject)
   const conversationFilter = useUIStore((s) => s.conversationFilter)
+  const searchOpen = useProjectStore((s) => s.searchOpen)
+  const searchQuery = useProjectStore((s) => s.searchQuery)
+  const showArchived = useProjectStore((s) => s.showArchived)
 
   const handleSubmit = (name: string, path: string, color: string) => {
     addProject(name, path, color)
@@ -33,6 +37,55 @@ export function ProjectList() {
       }
     }, 0)
   }
+
+  const activeProjects = useMemo(() => projects.filter((p) => !p.archived), [projects])
+  const archivedProjects = useMemo(() => projects.filter((p) => p.archived), [projects])
+
+  const isSearching = searchOpen && searchQuery.trim().length > 0
+  const query = searchQuery.trim().toLowerCase()
+
+  const { visibleActive, visibleArchived, forceExpandedIds } = useMemo(() => {
+    if (isSearching) {
+      const matchesProject = (p: typeof projects[0]) =>
+        p.name.toLowerCase().includes(query) ||
+        p.conversations.some((c) => c.name.toLowerCase().includes(query))
+
+      const expandIds = new Set<string>()
+      for (const p of projects) {
+        if (p.conversations.some((c) => c.name.toLowerCase().includes(query))) {
+          expandIds.add(p.id)
+        }
+      }
+
+      return {
+        visibleActive: activeProjects.filter(matchesProject),
+        visibleArchived: archivedProjects.filter(matchesProject),
+        forceExpandedIds: expandIds
+      }
+    }
+
+    // Normal mode: apply conversation status filters on active projects only
+    let filtered = activeProjects
+    if (conversationFilter === 'unanswered') {
+      filtered = activeProjects.filter((p) =>
+        p.conversations.some((c) => !c.archived && c.status === 'waiting')
+      )
+    } else if (conversationFilter === 'working') {
+      filtered = activeProjects.filter((p) =>
+        p.conversations.some((c) => !c.archived && c.status === 'running')
+      )
+    } else if (conversationFilter === 'unread') {
+      filtered = activeProjects.filter((p) =>
+        p.conversations.some((c) => !c.archived && c.unread && c.status !== 'running')
+      )
+    }
+
+    return {
+      visibleActive: filtered,
+      visibleArchived: showArchived ? archivedProjects : [],
+      forceExpandedIds: new Set<string>()
+    }
+  }, [projects, activeProjects, archivedProjects, isSearching, query, conversationFilter, showArchived])
 
   if (projects.length === 0 && !adding) {
     return (
@@ -56,21 +109,6 @@ export function ProjectList() {
     )
   }
 
-  const visibleProjects =
-    conversationFilter === 'unanswered'
-      ? projects.filter((p) =>
-          p.conversations.some((c) => !c.archived && c.status === 'waiting')
-        )
-      : conversationFilter === 'working'
-        ? projects.filter((p) =>
-            p.conversations.some((c) => !c.archived && c.status === 'running')
-          )
-        : conversationFilter === 'unread'
-          ? projects.filter((p) =>
-              p.conversations.some((c) => !c.archived && c.unread && c.status !== 'running')
-            )
-          : projects
-
   const emptyMessages: Record<string, string> = {
     unanswered: 'No pending conversations',
     working: 'No working conversations',
@@ -78,15 +116,42 @@ export function ProjectList() {
   }
   const emptyMessage = emptyMessages[conversationFilter] ?? null
 
+  const noResults = isSearching && visibleActive.length === 0 && visibleArchived.length === 0
+
   return (
     <div className="flex flex-col gap-0.5">
-      {visibleProjects.map((project) => (
-        <ProjectItem key={project.id} project={project} />
+      {visibleActive.map((project) => (
+        <ProjectItem
+          key={project.id}
+          project={project}
+          forceExpanded={forceExpandedIds.has(project.id)}
+        />
       ))}
-      {emptyMessage && visibleProjects.length === 0 && projects.length > 0 && (
+      {!isSearching && emptyMessage && visibleActive.length === 0 && activeProjects.length > 0 && (
         <div className="px-4 py-6 text-center text-[11px] text-text-secondary">
           {emptyMessage}
         </div>
+      )}
+      {noResults && (
+        <div className="px-4 py-6 text-center text-[11px] text-text-secondary">
+          No matching projects or sessions
+        </div>
+      )}
+      {visibleArchived.length > 0 && (
+        <>
+          <div className="mx-2 mt-2 flex items-center gap-1.5 border-t border-border-default px-1 pt-2 text-[10px] text-text-secondary">
+            <Archive size={10} />
+            <span>Archived Projects ({visibleArchived.length})</span>
+          </div>
+          {visibleArchived.map((project) => (
+            <ProjectItem
+              key={project.id}
+              project={project}
+              isArchived
+              forceExpanded={forceExpandedIds.has(project.id)}
+            />
+          ))}
+        </>
       )}
       {adding && (
         <NewProjectForm onSubmit={handleSubmit} onCancel={stopAdding} />

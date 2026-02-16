@@ -1,6 +1,7 @@
 import { create } from 'zustand'
-import type { Project, Conversation, ConversationStatus, ConversationType } from '../types'
+import type { Project, Conversation, ConversationStatus, ConversationType, BrowserTab } from '../types'
 import { useUIStore } from './uiStore'
+import { useConversationStore } from './conversationStore'
 
 export const PROJECT_COLORS = ['#f97316', '#8b5cf6', '#06b6d4', '#10b981', '#ec4899', '#eab308', '#ef4444', '#6366f1']
 
@@ -13,9 +14,15 @@ interface ProjectState {
   activeProjectId: string | null
   expandedProjectIds: Set<string>
   showArchived: boolean
+  searchQuery: string
+  searchOpen: boolean
   setActiveProject: (id: string) => void
   toggleProjectExpanded: (id: string) => void
   toggleShowArchived: () => void
+  setSearchQuery: (q: string) => void
+  toggleSearch: () => void
+  archiveProject: (projectId: string) => void
+  unarchiveProject: (projectId: string) => void
   addProject: (name: string, path: string, color?: string) => void
   deleteProject: (projectId: string) => void
   renameProject: (projectId: string, name: string) => void
@@ -28,7 +35,7 @@ interface ProjectState {
   markConversationRead: (conversationId: string) => void
   markConversationUnread: (conversationId: string) => void
   setConversationStatus: (conversationId: string, status: ConversationStatus) => void
-  setProjectPreview: (projectId: string, previewOpen: boolean, previewUrl: string) => void
+  setProjectPreview: (projectId: string, previewOpen: boolean, previewTabs: BrowserTab[], activePreviewTabId: string) => void
   loadFromDisk: () => Promise<void>
 }
 
@@ -37,16 +44,74 @@ export const useProjectStore = create<ProjectState>((set) => ({
   activeProjectId: null,
   expandedProjectIds: new Set<string>(),
   showArchived: false,
+  searchQuery: '',
+  searchOpen: false,
+
+  setSearchQuery: (q) => set({ searchQuery: q }),
+
+  toggleSearch: () =>
+    set((state) => ({
+      searchOpen: !state.searchOpen,
+      searchQuery: state.searchOpen ? '' : state.searchQuery
+    })),
+
+  archiveProject: (projectId) =>
+    set((state) => {
+      const convStore = useConversationStore.getState()
+      const project = state.projects.find((p) => p.id === projectId)
+      if (project) {
+        for (const conv of project.conversations) {
+          convStore.closeTab(conv.id)
+        }
+      }
+
+      const projects = state.projects.map((p) =>
+        p.id === projectId
+          ? {
+              ...p,
+              archived: true,
+              conversations: p.conversations.map((c) => ({ ...c, archived: true }))
+            }
+          : p
+      )
+
+      let activeProjectId = state.activeProjectId
+      if (activeProjectId === projectId) {
+        activeProjectId = projects.find((p) => !p.archived)?.id ?? null
+      }
+
+      return { projects, activeProjectId }
+    }),
+
+  unarchiveProject: (projectId) =>
+    set((state) => ({
+      projects: state.projects.map((p) =>
+        p.id === projectId
+          ? {
+              ...p,
+              archived: false,
+              conversations: p.conversations.map((c) => ({ ...c, archived: false }))
+            }
+          : p
+      )
+    })),
 
   setActiveProject: (id) =>
     set((state) => {
       const ui = useUIStore.getState()
 
       // Save current preview state to outgoing project
+      const activeTab = ui.previewTabs.find((t) => t.id === ui.activePreviewTabId)
       const projects = state.activeProjectId
         ? state.projects.map((p) =>
             p.id === state.activeProjectId
-              ? { ...p, previewOpen: ui.previewOpen, previewUrl: ui.previewUrl }
+              ? {
+                  ...p,
+                  previewOpen: ui.previewOpen,
+                  previewTabs: ui.previewTabs,
+                  activePreviewTabId: ui.activePreviewTabId,
+                  previewUrl: activeTab?.url ?? p.previewUrl
+                }
               : p
           )
         : state.projects
@@ -54,10 +119,15 @@ export const useProjectStore = create<ProjectState>((set) => ({
       // Load incoming project's preview state into uiStore
       const incoming = projects.find((p) => p.id === id)
       if (incoming) {
-        ui.setPreviewState(
-          incoming.previewOpen ?? false,
-          incoming.previewUrl ?? 'http://localhost:3000'
-        )
+        const tabs =
+          incoming.previewTabs && incoming.previewTabs.length > 0
+            ? incoming.previewTabs
+            : [{ id: uid(), url: incoming.previewUrl || 'http://localhost:3000' }]
+        const tabId =
+          incoming.activePreviewTabId && tabs.some((t) => t.id === incoming.activePreviewTabId)
+            ? incoming.activePreviewTabId
+            : tabs[0]?.id ?? ''
+        ui.setPreviewState(incoming.previewOpen ?? false, tabs, tabId)
       }
 
       return {
@@ -155,12 +225,16 @@ export const useProjectStore = create<ProjectState>((set) => ({
 
   unarchiveConversation: (conversationId) =>
     set((state) => ({
-      projects: state.projects.map((p) => ({
-        ...p,
-        conversations: p.conversations.map((c) =>
-          c.id === conversationId ? { ...c, archived: false } : c
-        )
-      }))
+      projects: state.projects.map((p) => {
+        const hasConv = p.conversations.some((c) => c.id === conversationId)
+        return {
+          ...p,
+          archived: hasConv ? false : p.archived,
+          conversations: p.conversations.map((c) =>
+            c.id === conversationId ? { ...c, archived: false } : c
+          )
+        }
+      })
     })),
 
   deleteConversation: (conversationId) =>
@@ -238,16 +312,30 @@ export const useProjectStore = create<ProjectState>((set) => ({
       projects: state.projects.map((p) => ({
         ...p,
         conversations: p.conversations.map((c) =>
-          c.id === conversationId ? { ...c, status } : c
+          c.id === conversationId
+            ? {
+                ...c,
+                status,
+                waitingSince: status === 'waiting' ? (c.status !== 'waiting' ? new Date().toISOString() : c.waitingSince) : undefined
+              }
+            : c
         )
       }))
     })),
 
-  setProjectPreview: (projectId, previewOpen, previewUrl) =>
+  setProjectPreview: (projectId, previewOpen, previewTabs, activePreviewTabId) =>
     set((state) => ({
-      projects: state.projects.map((p) =>
-        p.id === projectId ? { ...p, previewOpen, previewUrl } : p
-      )
+      projects: state.projects.map((p) => {
+        if (p.id !== projectId) return p
+        const activeTab = previewTabs.find((t) => t.id === activePreviewTabId)
+        return {
+          ...p,
+          previewOpen,
+          previewTabs,
+          activePreviewTabId,
+          previewUrl: activeTab?.url ?? p.previewUrl
+        }
+      })
     })),
 
   loadFromDisk: async () => {
@@ -290,11 +378,13 @@ export const useProjectStore = create<ProjectState>((set) => ({
         return {
           ...p,
           id: projId,
+          archived: p.archived ?? false,
           conversations: p.conversations.map((c) => ({
             ...c,
             id: `conv-${uid()}`,
             projectId: projId,
-            status: 'idle' as ConversationStatus,
+            status: 'waiting' as ConversationStatus,
+            waitingSince: c.waitingSince || new Date().toISOString(),
             claudeSessionId: c.claudeSessionId || (c.type === 'terminal' ? undefined : crypto.randomUUID()),
             type: c.type || 'claude'
           }))
@@ -303,19 +393,33 @@ export const useProjectStore = create<ProjectState>((set) => ({
     } else {
       projects = savedProjects.map((p) => ({
         ...p,
+        archived: p.archived ?? false,
         conversations: p.conversations.map((c) => ({
           ...c,
-          status: 'idle' as ConversationStatus,
+          status: 'waiting' as ConversationStatus,
+          waitingSince: c.waitingSince || new Date().toISOString(),
           claudeSessionId: c.claudeSessionId || (c.type === 'terminal' ? undefined : crypto.randomUUID()),
           type: c.type || 'claude'
         }))
       }))
     }
 
-    // Resolve active project (use saved if still exists, else first)
+    // Migrate old previewUrl → previewTabs for all projects
+    projects = projects.map((p) => {
+      if (p.previewTabs && p.previewTabs.length > 0) return p
+      const tab = { id: uid(), url: p.previewUrl || 'http://localhost:3000' }
+      return { ...p, previewTabs: [tab], activePreviewTabId: tab.id }
+    })
+
+    // Resolve active project (use saved if still exists and not archived, else first non-archived)
+    const findActive = (id: string | null) => {
+      const p = id ? projects.find((p) => p.id === id) : null
+      if (p && !p.archived) return id
+      return projects.find((p) => !p.archived)?.id ?? null
+    }
     const activeProjectId = needsRegen
-      ? (projects[0]?.id ?? null)
-      : (projects.find((p) => p.id === savedActiveId) ? savedActiveId : (projects[0]?.id ?? null))
+      ? findActive(projects[0]?.id ?? null)
+      : findActive(savedActiveId)
 
     // Resolve expanded IDs (use saved if IDs weren't regenerated)
     const expandedProjectIds = needsRegen
@@ -327,10 +431,16 @@ export const useProjectStore = create<ProjectState>((set) => ({
     // Sync active project's preview state to uiStore
     const activeProject = projects.find((p) => p.id === activeProjectId)
     if (activeProject) {
-      useUIStore.getState().setPreviewState(
-        activeProject.previewOpen ?? false,
-        activeProject.previewUrl ?? 'http://localhost:3000'
-      )
+      const tabs =
+        activeProject.previewTabs && activeProject.previewTabs.length > 0
+          ? activeProject.previewTabs
+          : [{ id: uid(), url: activeProject.previewUrl || 'http://localhost:3000' }]
+      const tabId =
+        activeProject.activePreviewTabId &&
+        tabs.some((t) => t.id === activeProject.activePreviewTabId)
+          ? activeProject.activePreviewTabId!
+          : tabs[0]?.id ?? ''
+      useUIStore.getState().setPreviewState(activeProject.previewOpen ?? false, tabs, tabId)
     }
   }
 }))

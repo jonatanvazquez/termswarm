@@ -2,16 +2,30 @@ import { app } from 'electron'
 import { join } from 'path'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 
-const DATA_DIR = join(app.getPath('userData'), 'termswarm-data')
-const DATA_FILE = join(DATA_DIR, 'projects.json')
-const BUFFERS_FILE = join(DATA_DIR, 'buffers.json')
-const SETTINGS_FILE = join(DATA_DIR, 'settings.json')
-const UI_LAYOUT_FILE = join(DATA_DIR, 'ui-layout.json')
+function getDataDir(): string {
+  return join(app.getPath('userData'), 'termswarm-data')
+}
+
+function getDataFile(): string {
+  return join(getDataDir(), 'projects.json')
+}
+
+function getBuffersFile(): string {
+  return join(getDataDir(), 'buffers.json')
+}
+
+function getSettingsFile(): string {
+  return join(getDataDir(), 'settings.json')
+}
+
+function getUILayoutFile(): string {
+  return join(getDataDir(), 'ui-layout.json')
+}
 
 export function loadProjects(): unknown {
   try {
-    if (!existsSync(DATA_FILE)) return null
-    const raw = readFileSync(DATA_FILE, 'utf-8')
+    if (!existsSync(getDataFile())) return null
+    const raw = readFileSync(getDataFile(), 'utf-8')
     return JSON.parse(raw)
   } catch {
     return null
@@ -20,10 +34,10 @@ export function loadProjects(): unknown {
 
 export function saveProjects(data: unknown): void {
   try {
-    if (!existsSync(DATA_DIR)) {
-      mkdirSync(DATA_DIR, { recursive: true })
+    if (!existsSync(getDataDir())) {
+      mkdirSync(getDataDir(), { recursive: true })
     }
-    writeFileSync(DATA_FILE, JSON.stringify(data, null, 2), 'utf-8')
+    writeFileSync(getDataFile(), JSON.stringify(data, null, 2), 'utf-8')
   } catch (err) {
     console.error('Failed to save projects:', err)
   }
@@ -31,8 +45,8 @@ export function saveProjects(data: unknown): void {
 
 export function loadBuffers(): Record<string, string> | null {
   try {
-    if (!existsSync(BUFFERS_FILE)) return null
-    const raw = readFileSync(BUFFERS_FILE, 'utf-8')
+    if (!existsSync(getBuffersFile())) return null
+    const raw = readFileSync(getBuffersFile(), 'utf-8')
     return JSON.parse(raw)
   } catch {
     return null
@@ -41,10 +55,10 @@ export function loadBuffers(): Record<string, string> | null {
 
 export function saveBuffers(data: Record<string, string>): void {
   try {
-    if (!existsSync(DATA_DIR)) {
-      mkdirSync(DATA_DIR, { recursive: true })
+    if (!existsSync(getDataDir())) {
+      mkdirSync(getDataDir(), { recursive: true })
     }
-    writeFileSync(BUFFERS_FILE, JSON.stringify(data), 'utf-8')
+    writeFileSync(getBuffersFile(), JSON.stringify(data), 'utf-8')
   } catch (err) {
     console.error('Failed to save buffers:', err)
   }
@@ -52,8 +66,8 @@ export function saveBuffers(data: Record<string, string>): void {
 
 export function loadSettings(): unknown {
   try {
-    if (!existsSync(SETTINGS_FILE)) return null
-    const raw = readFileSync(SETTINGS_FILE, 'utf-8')
+    if (!existsSync(getSettingsFile())) return null
+    const raw = readFileSync(getSettingsFile(), 'utf-8')
     return JSON.parse(raw)
   } catch {
     return null
@@ -62,10 +76,10 @@ export function loadSettings(): unknown {
 
 export function saveSettings(data: unknown): void {
   try {
-    if (!existsSync(DATA_DIR)) {
-      mkdirSync(DATA_DIR, { recursive: true })
+    if (!existsSync(getDataDir())) {
+      mkdirSync(getDataDir(), { recursive: true })
     }
-    writeFileSync(SETTINGS_FILE, JSON.stringify(data, null, 2), 'utf-8')
+    writeFileSync(getSettingsFile(), JSON.stringify(data, null, 2), 'utf-8')
   } catch (err) {
     console.error('Failed to save settings:', err)
   }
@@ -73,8 +87,8 @@ export function saveSettings(data: unknown): void {
 
 export function loadUILayout(): unknown {
   try {
-    if (!existsSync(UI_LAYOUT_FILE)) return null
-    const raw = readFileSync(UI_LAYOUT_FILE, 'utf-8')
+    if (!existsSync(getUILayoutFile())) return null
+    const raw = readFileSync(getUILayoutFile(), 'utf-8')
     return JSON.parse(raw)
   } catch {
     return null
@@ -83,10 +97,10 @@ export function loadUILayout(): unknown {
 
 export function saveUILayout(data: unknown): void {
   try {
-    if (!existsSync(DATA_DIR)) {
-      mkdirSync(DATA_DIR, { recursive: true })
+    if (!existsSync(getDataDir())) {
+      mkdirSync(getDataDir(), { recursive: true })
     }
-    writeFileSync(UI_LAYOUT_FILE, JSON.stringify(data, null, 2), 'utf-8')
+    writeFileSync(getUILayoutFile(), JSON.stringify(data, null, 2), 'utf-8')
   } catch (err) {
     console.error('Failed to save UI layout:', err)
   }

@@ -55,7 +55,7 @@ export const useConversationStore = create<ConversationState>((set) => ({
         const args: string[] = []
 
         if (mode === 'claude' && conversation?.claudeSessionId) {
-          if (conversation.status === 'idle') {
+          if (conversation.status === 'idle' || conversation.status === 'waiting') {
             args.push('--resume', conversation.claudeSessionId)
           } else {
             args.push('--session-id', conversation.claudeSessionId)

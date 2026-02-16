@@ -1,6 +1,12 @@
 import { ElectronAPI } from '@electron-toolkit/preload'
 import type { ConversationStatus } from '../shared/types'
 import type { GitStatusResult, GitLogResult, GitPullResult } from '../shared/gitTypes'
+import type {
+  AndroidEmulator,
+  IOSSimulator,
+  EmulatorListResult
+} from '../shared/emulatorTypes'
+import type { UpdateStatus } from '../shared/updateTypes'
 
 type CleanupFn = () => void
 
@@ -60,6 +66,22 @@ declare global {
       gitUnstageAll: (cwd: string) => Promise<void>
       gitCommit: (cwd: string, message: string) => Promise<void>
       gitPull: (cwd: string) => Promise<GitPullResult>
+
+      // Emulators
+      platform: string
+      emulatorListAndroid: () => Promise<EmulatorListResult<AndroidEmulator>>
+      emulatorLaunchAndroid: (avdName: string) => Promise<{ success: boolean; error?: string }>
+      emulatorListIOS: () => Promise<EmulatorListResult<IOSSimulator>>
+      emulatorLaunchIOS: (udid: string) => Promise<{ success: boolean; error?: string }>
+      emulatorOpenAndroidManager: () => Promise<{ success: boolean; error?: string }>
+      emulatorOpenIOSManager: () => Promise<{ success: boolean; error?: string }>
+
+      // Updater
+      updaterGetStatus: () => Promise<UpdateStatus>
+      updaterCheck: () => Promise<void>
+      updaterDownload: () => Promise<void>
+      updaterInstall: () => Promise<void>
+      onUpdaterStatus: (callback: (status: UpdateStatus) => void) => CleanupFn
 
       // Zoom
       setZoomFactor: (factor: number) => void

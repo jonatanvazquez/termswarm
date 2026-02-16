@@ -16,12 +16,16 @@ import { IconButton } from '../common/IconButton'
 type DeviceMode = 'desktop' | 'mobile'
 
 export function MockPreview() {
-  const previewUrl = useUIStore((s) => s.previewUrl)
-  const setPreviewUrl = useUIStore((s) => s.setPreviewUrl)
+  const previewTabs = useUIStore((s) => s.previewTabs)
+  const activePreviewTabId = useUIStore((s) => s.activePreviewTabId)
+  const setPreviewTabUrl = useUIStore((s) => s.setPreviewTabUrl)
   const togglePreview = useUIStore((s) => s.togglePreview)
   const activeProjectId = useProjectStore((s) => s.activeProjectId)
   const projects = useProjectStore((s) => s.projects)
   const activeProject = projects.find((p) => p.id === activeProjectId)
+
+  const activeTab = previewTabs.find((t) => t.id === activePreviewTabId)
+  const previewUrl = activeTab?.url ?? 'http://localhost:3000'
 
   const [urlInput, setUrlInput] = useState(previewUrl)
   const [deviceMode, setDeviceMode] = useState<DeviceMode>('desktop')
@@ -31,7 +35,7 @@ export function MockPreview() {
     if (e.key === 'Enter') {
       let url = urlInput.trim()
       if (url && !url.startsWith('http')) url = `http://${url}`
-      setPreviewUrl(url)
+      if (activePreviewTabId) setPreviewTabUrl(activePreviewTabId, url)
     }
   }
 

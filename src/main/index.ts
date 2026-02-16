@@ -1,12 +1,14 @@
-import { app, shell, BrowserWindow, ipcMain, dialog, nativeImage } from 'electron'
+import { app, shell, BrowserWindow, ipcMain, dialog, nativeImage, Menu } from 'electron'
 import { join } from 'path'
 import { homedir } from 'os'
 import { createConnection } from 'net'
 import { copyFile, cp, access } from 'fs/promises'
-import { electronApp, optimizer, is } from '@electron-toolkit/utils'
+import { electronApp, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { ptyManager } from './ptyManager'
 import { gitManager } from './gitManager'
+import { emulatorManager } from './emulatorManager'
+import { updateManager } from './updateManager'
 import { loadProjects, saveProjects, loadBuffers, saveBuffers, loadSettings, saveSettings, loadUILayout, saveUILayout } from './persistence'
 
 /** Check TCP reachability using Node.js net (bypasses Chromium network stack). */
@@ -68,6 +70,11 @@ function createWindow(): BrowserWindow {
   return mainWindow
 }
 
+// In dev mode, isolate userData so a dev instance doesn't share data with the installed app
+if (is.dev) {
+  app.setPath('userData', join(app.getPath('userData'), 'Dev'))
+}
+
 app.whenReady().then(() => {
   electronApp.setAppUserModelId('com.termswarm')
 
@@ -77,9 +84,32 @@ app.whenReady().then(() => {
     app.dock.setIcon(nativeImage.createFromPath(icon))
   }
 
-  app.on('browser-window-created', (_, window) => {
-    optimizer.watchWindowShortcuts(window)
-  })
+  // Register dev shortcuts via Menu accelerators instead of before-input-event.
+  // optimizer.watchWindowShortcuts uses before-input-event on the parent window which
+  // prevents keyboard events (Enter, etc.) from reaching <webview> guest pages.
+  const menuTemplate: Electron.MenuItemConstructorOptions[] = [
+    { role: 'appMenu' },
+    { role: 'editMenu' },
+    {
+      label: 'View',
+      submenu: [
+        ...(is.dev
+          ? [
+              {
+                label: 'Toggle DevTools',
+                accelerator: 'F12',
+                click: (_mi: Electron.MenuItem, win?: BrowserWindow): void => {
+                  win?.webContents.toggleDevTools()
+                }
+              } as Electron.MenuItemConstructorOptions
+            ]
+          : []),
+        { type: 'separator' as const }
+      ]
+    },
+    { role: 'windowMenu' }
+  ]
+  Menu.setApplicationMenu(Menu.buildFromTemplate(menuTemplate))
 
   ipcMain.on('ping', () => console.log('pong'))
 
@@ -217,17 +247,84 @@ app.whenReady().then(() => {
   )
   ipcMain.handle('git:pull', (_e, cwd: string) => gitManager.pull(cwd))
 
+  // Emulator handlers
+  ipcMain.handle('emulator:listAndroid', () => emulatorManager.listAndroid())
+  ipcMain.handle('emulator:launchAndroid', (_e, avdName: string) =>
+    emulatorManager.launchAndroid(avdName)
+  )
+  ipcMain.handle('emulator:listIOS', () => emulatorManager.listIOS())
+  ipcMain.handle('emulator:launchIOS', (_e, udid: string) => emulatorManager.launchIOS(udid))
+  ipcMain.handle('emulator:openAndroidManager', () => emulatorManager.openAndroidManager())
+  ipcMain.handle('emulator:openIOSManager', () => emulatorManager.openIOSManager())
+
+  // Updater handlers
+  ipcMain.handle('updater:getStatus', () => {
+    if (!app.isPackaged) {
+      return { state: 'idle', currentVersion: 'dev' }
+    }
+    return updateManager.getStatus()
+  })
+
+  ipcMain.handle('updater:check', async () => {
+    if (!app.isPackaged) return
+    await updateManager.check()
+  })
+
+  ipcMain.handle('updater:download', async () => {
+    if (!app.isPackaged) return
+    await updateManager.download()
+  })
+
+  ipcMain.handle('updater:install', () => {
+    if (!app.isPackaged) return
+    updateManager.install()
+  })
+
   const mainWindow = createWindow()
   ptyManager.setMainWindow(mainWindow)
+
+  if (app.isPackaged) {
+    updateManager.init(mainWindow, app.getVersion())
+  }
 
   // Suppress webview errors — renderer handles recovery
   mainWindow.webContents.on('did-attach-webview', (_e, webContents) => {
     webContents.on('did-fail-load', () => {})
     webContents.on('render-process-gone', () => {})
+
+    // Workaround for Electron <webview> keyboard bug: Enter key reaches the
+    // webview process (before-input-event fires) but Chromium doesn't dispatch
+    // it to the guest page's DOM. We pre-register a handler in the guest page,
+    // then invoke it from before-input-event.
+    webContents.setBackgroundThrottling(false)
+
+    const registerEnterHandler = (): void => {
+      webContents.executeJavaScript(`
+        window.__tsEnter = function() {
+          var el = document.activeElement;
+          if (!el) return;
+          var o = {key:'Enter',code:'Enter',keyCode:13,which:13,bubbles:true,cancelable:true};
+          el.dispatchEvent(new KeyboardEvent('keydown',o));
+          el.dispatchEvent(new KeyboardEvent('keypress',o));
+          el.dispatchEvent(new KeyboardEvent('keyup',o));
+          var f = el.closest ? el.closest('form') : null;
+          if (f) { f.requestSubmit(); return; }
+          if (el.tagName==='BUTTON'||el.tagName==='A'||(el.getAttribute&&el.getAttribute('role')==='button')) el.click();
+        };
+      `).catch(() => {})
+    }
+    webContents.on('dom-ready', registerEnterHandler)
+    webContents.on('did-navigate', registerEnterHandler)
+
+    webContents.on('before-input-event', (_event, input) => {
+      if (input.key !== 'Enter' || input.type !== 'keyDown' || input.isAutoRepeat) return
+      webContents.executeJavaScript('window.__tsEnter&&window.__tsEnter()').catch(() => {})
+    })
   })
 
   mainWindow.on('closed', () => {
     ptyManager.killAll()
+    updateManager.destroy()
   })
 
   app.on('activate', function () {

@@ -44,9 +44,13 @@ function App(): React.JSX.Element {
     }
     window.addEventListener('beforeunload', handleBeforeUnload)
 
+    // Auto-update listener
+    const cleanupUpdater = useSettingsStore.getState().initUpdateListener()
+
     return () => {
       clearInterval(interval)
       window.removeEventListener('beforeunload', handleBeforeUnload)
+      cleanupUpdater()
     }
   }, [])
 

@@ -1,7 +1,6 @@
 import { useEffect } from 'react'
 import { useTerminalStore } from '../store/terminalStore'
 import { useProjectStore } from '../store/projectStore'
-import { useNotificationStore } from '../store/notificationStore'
 import { useConversationStore } from '../store/conversationStore'
 import { useUIStore } from '../store/uiStore'
 import type { ConversationStatus } from '../../../shared/types'
@@ -21,9 +20,6 @@ export function usePtyListener(): void {
       const status: ConversationStatus = exitCode === 0 ? 'idle' : 'error'
       useProjectStore.getState().setConversationStatus(sessionId, status)
 
-      if (status === 'error') {
-        generateNotification(sessionId, status, `Process exited with code ${exitCode}`)
-      }
     })
 
     const cleanupStatus = window.api.onPtyStatus((sessionId, status) => {
@@ -74,11 +70,6 @@ export function usePtyListener(): void {
         }
       }
 
-      if (status === 'waiting') {
-        generateNotification(sessionId, status, 'Waiting for input')
-      } else if (status === 'error') {
-        generateNotification(sessionId, status, 'Process encountered an error')
-      }
     })
 
     const cleanupMemory = window.api.onPtyMemory
@@ -94,32 +85,4 @@ export function usePtyListener(): void {
       cleanupMemory?.()
     }
   }, [])
-}
-
-function generateNotification(
-  conversationId: string,
-  status: ConversationStatus,
-  message: string
-): void {
-  const { projects } = useProjectStore.getState()
-  let projectName = ''
-  let conversationName = ''
-
-  for (const p of projects) {
-    const c = p.conversations.find((c) => c.id === conversationId)
-    if (c) {
-      projectName = p.name
-      conversationName = c.name
-      break
-    }
-  }
-
-  const type = status === 'error' ? 'error' : status === 'waiting' ? 'warning' : 'info'
-  useNotificationStore.getState().addNotification({
-    conversationId,
-    projectName,
-    conversationName,
-    message,
-    type
-  })
 }
