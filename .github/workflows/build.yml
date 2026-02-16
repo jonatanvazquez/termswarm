@@ -61,6 +61,7 @@ jobs:
           path: |
             dist/*.dmg
             dist/*-mac.zip
+            dist/latest-mac.yml
           if-no-files-found: error
 
   # ─── Windows (x64) ────────────────────────────────────────────────
@@ -88,6 +89,7 @@ jobs:
           name: windows
           path: |
             dist/*-setup.exe
+            dist/latest.yml
           if-no-files-found: error
 
   # ─── Linux (x64) ──────────────────────────────────────────────────
@@ -117,6 +119,7 @@ jobs:
             dist/*.AppImage
             dist/*.deb
             dist/*.snap
+            dist/latest-linux.yml
           if-no-files-found: error
 
   # ─── Create / update GitHub Release ───────────────────────────────
