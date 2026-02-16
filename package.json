@@ -1,6 +1,6 @@
 {
   "name": "termswarm",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "All your terminals. One command center. Unifies terminal sessions, Claude Code workflows, and web previews into a single workspace.",
   "main": "./out/main/index.js",
   "author": "Jonatan Vazquez",
