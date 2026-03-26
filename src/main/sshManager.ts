@@ -17,6 +17,7 @@ interface ManagedConnection {
   reconnectAttempts: number
   reconnectTimer: ReturnType<typeof setTimeout> | null
   activeSessions: Set<string>
+  tmuxAvailable: boolean | null // null = not checked yet
 }
 
 const MAX_RECONNECT_ATTEMPTS = 5
@@ -28,9 +29,15 @@ const KEEPALIVE_COUNT_MAX = 3
 class SSHManager {
   private connections = new Map<string, ManagedConnection>()
   private mainWindow: BrowserWindow | null = null
+  private reconnectCallback: ((connectionId: string) => void) | null = null
 
   setMainWindow(win: BrowserWindow): void {
     this.mainWindow = win
+  }
+
+  /** Register callback to be called when an SSH connection is re-established */
+  onReconnect(callback: (connectionId: string) => void): void {
+    this.reconnectCallback = callback
   }
 
   async connect(config: SSHConnection): Promise<void> {
@@ -47,7 +54,8 @@ class SSHManager {
       status: 'connecting',
       reconnectAttempts: 0,
       reconnectTimer: null,
-      activeSessions: new Set()
+      activeSessions: new Set(),
+      tmuxAvailable: null
     }
 
     this.connections.set(config.id, managed)
@@ -60,7 +68,8 @@ class SSHManager {
         managed.error = undefined
         this.emitStatus(config.id, 'connected')
 
-        // Configure git credentials if token provided
+        // Check tmux availability + configure git credentials in parallel
+        this.checkTmux(config.id).catch(() => {})
         if (config.gitToken) {
           this.setupGitCredentials(config.id, config.gitToken).catch(() => {})
         }
@@ -163,6 +172,29 @@ class SSHManager {
     return managed?.status ?? 'disconnected'
   }
 
+  /** Generate a stable tmux session name for a given TermSwarm session */
+  tmuxSessionName(sessionId: string): string {
+    // Sanitize: tmux names can't contain dots or colons
+    return `ts-${sessionId.replace(/[.:]/g, '-')}`
+  }
+
+  /** Check whether tmux is installed on the remote host */
+  async checkTmux(connectionId: string): Promise<boolean> {
+    const managed = this.connections.get(connectionId)
+    if (!managed) return false
+    try {
+      const { code } = await this.exec(connectionId, 'command -v tmux')
+      managed.tmuxAvailable = code === 0
+    } catch {
+      managed.tmuxAvailable = false
+    }
+    return managed.tmuxAvailable
+  }
+
+  isTmuxAvailable(connectionId: string): boolean {
+    return this.connections.get(connectionId)?.tmuxAvailable === true
+  }
+
   async openShell(
     connectionId: string,
     cwd: string,
@@ -170,6 +202,71 @@ class SSHManager {
     rows: number,
     sessionId: string,
     command?: string
+  ): Promise<ClientChannel> {
+    const managed = this.connections.get(connectionId)
+    if (!managed || managed.status !== 'connected') {
+      throw new Error(`SSH connection ${connectionId} is not connected`)
+    }
+
+    managed.activeSessions.add(sessionId)
+
+    // Wait for tmux check if it hasn't completed yet
+    if (managed.tmuxAvailable === null) {
+      await this.checkTmux(connectionId)
+    }
+
+    return new Promise((resolve, reject) => {
+      const shellOpts = {
+        term: 'xterm-256color',
+        cols,
+        rows,
+        env: { LANG: 'en_US.UTF-8' }
+      }
+
+      managed.client.shell(shellOpts, (err, stream) => {
+        if (err) {
+          managed.activeSessions.delete(sessionId)
+          reject(err)
+          return
+        }
+
+        stream.on('close', () => {
+          managed.activeSessions.delete(sessionId)
+        })
+
+        const fixPath =
+          'export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$HOME/.local/bin:$PATH'
+
+        if (managed.tmuxAvailable) {
+          const tmuxName = this.tmuxSessionName(sessionId)
+          // Build the inner command that tmux will run
+          const innerCmd = command
+            ? `cd ${shellEscape(cwd)} && ${command}`
+            : `cd ${shellEscape(cwd)}`
+          // Try to attach to existing session, or create a new one
+          stream.write(
+            `${fixPath} && tmux has-session -t ${shellEscape(tmuxName)} 2>/dev/null && tmux attach -t ${shellEscape(tmuxName)} || tmux new-session -s ${shellEscape(tmuxName)} ${shellEscape(innerCmd)}\n`
+          )
+        } else {
+          // Fallback: no tmux, run directly as before
+          if (command) {
+            stream.write(`${fixPath} && cd ${shellEscape(cwd)} && ${command}\n`)
+          } else {
+            stream.write(`${fixPath} && cd ${shellEscape(cwd)} && clear\n`)
+          }
+        }
+
+        resolve(stream)
+      })
+    })
+  }
+
+  /** Reattach to an existing tmux session after SSH reconnection */
+  async reattachTmux(
+    connectionId: string,
+    cols: number,
+    rows: number,
+    sessionId: string
   ): Promise<ClientChannel> {
     const managed = this.connections.get(connectionId)
     if (!managed || managed.status !== 'connected') {
@@ -197,18 +294,24 @@ class SSHManager {
           managed.activeSessions.delete(sessionId)
         })
 
-        // Fix PATH for non-login shells, then cd and optionally run a command
         const fixPath =
           'export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$HOME/.local/bin:$PATH'
-        if (command) {
-          stream.write(`${fixPath} && cd ${shellEscape(cwd)} && ${command}\n`)
-        } else {
-          stream.write(`${fixPath} && cd ${shellEscape(cwd)} && clear\n`)
-        }
+        const tmuxName = this.tmuxSessionName(sessionId)
+        stream.write(`${fixPath} && tmux attach -t ${shellEscape(tmuxName)}\n`)
 
         resolve(stream)
       })
     })
+  }
+
+  /** Kill a remote tmux session */
+  async killTmuxSession(connectionId: string, sessionId: string): Promise<void> {
+    try {
+      const tmuxName = this.tmuxSessionName(sessionId)
+      await this.exec(connectionId, `tmux kill-session -t ${shellEscape(tmuxName)}`)
+    } catch {
+      // Session may already be gone
+    }
   }
 
   async setupGitCredentials(connectionId: string, token: string): Promise<void> {
@@ -377,7 +480,12 @@ class SSHManager {
         managed.reconnectAttempts = 0
         managed.error = undefined
         this.emitStatus(connectionId, 'connected')
-        this.emitReconnected(connectionId)
+        // Re-check tmux availability on reconnect
+        this.checkTmux(connectionId)
+          .catch(() => {})
+          .finally(() => {
+            this.emitReconnected(connectionId)
+          })
         resolve()
       })
 
@@ -453,6 +561,10 @@ class SSHManager {
       }
     } catch {
       // Window may have been destroyed
+    }
+    // Trigger PTY reattach for all sessions on this connection
+    if (this.reconnectCallback) {
+      this.reconnectCallback(connectionId)
     }
   }
 }

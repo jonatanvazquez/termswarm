@@ -36,6 +36,8 @@ const api = {
     ipcRenderer.send('pty:resize', sessionId, cols, rows)
   },
   ptyKill: (sessionId: string): Promise<void> => ipcRenderer.invoke('pty:kill', sessionId),
+  ptyKillRemote: (sessionId: string): Promise<void> =>
+    ipcRenderer.invoke('pty:killRemote', sessionId),
   ptyPause: (sessionId: string): Promise<void> => ipcRenderer.invoke('pty:pause', sessionId),
   ptyResume: (sessionId: string): Promise<void> => ipcRenderer.invoke('pty:resume', sessionId),
 

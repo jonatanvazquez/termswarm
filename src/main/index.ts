@@ -179,6 +179,10 @@ app.whenReady().then(() => {
     ptyManager.kill(sessionId)
   })
 
+  ipcMain.handle('pty:killRemote', (_e, sessionId: string) => {
+    ptyManager.killRemote(sessionId)
+  })
+
   ipcMain.handle('pty:pause', (_e, sessionId: string) => {
     ptyManager.pause(sessionId)
   })
@@ -454,6 +458,9 @@ app.whenReady().then(() => {
   const mainWindow = createWindow()
   ptyManager.setMainWindow(mainWindow)
   sshManager.setMainWindow(mainWindow)
+  sshManager.onReconnect((connectionId) => {
+    ptyManager.reattachConnection(connectionId)
+  })
 
   if (app.isPackaged) {
     updateManager.init(mainWindow, app.getVersion())

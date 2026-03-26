@@ -14,6 +14,7 @@ interface PtySession {
   process: pty.IPty | null
   sshStream: ClientChannel | null
   connectionId?: string
+  cwd?: string
   lastDataTime: number
   lastOutput: string
   promptDetected: boolean
@@ -195,6 +196,7 @@ class PtyManager {
       process: null,
       sshStream: null,
       connectionId,
+      cwd,
       lastDataTime: Date.now(),
       lastOutput: '',
       promptDetected: false,
@@ -212,23 +214,7 @@ class PtyManager {
     sshManager
       .openShell(connectionId, cwd, 80, 24, sessionId, command)
       .then((stream) => {
-        session.sshStream = stream
-
-        stream.on('data', (data: Buffer) => {
-          this.handleData(sessionId, session, data.toString())
-        })
-
-        stream.on('close', () => {
-          session.status = 'idle'
-          session.awaitingResponse = false
-          this.send('pty:exit', sessionId, 0)
-          sshManager.removeSession(connectionId, sessionId)
-          this.sessions.delete(sessionId)
-        })
-
-        stream.stderr.on('data', (data: Buffer) => {
-          this.handleData(sessionId, session, data.toString())
-        })
+        this.attachSSHStream(sessionId, session, connectionId, stream)
       })
       .catch((err) => {
         session.status = 'error'
@@ -236,6 +222,73 @@ class PtyManager {
         this.send('pty:exit', sessionId, 1)
         this.sessions.delete(sessionId)
       })
+  }
+
+  /** Wire up an SSH stream (data, close, stderr) to a PtySession */
+  private attachSSHStream(
+    sessionId: string,
+    session: PtySession,
+    connectionId: string,
+    stream: ClientChannel
+  ): void {
+    session.sshStream = stream
+
+    stream.on('data', (data: Buffer) => {
+      this.handleData(sessionId, session, data.toString())
+    })
+
+    stream.on('close', () => {
+      // If tmux is available, the session is still alive on the server —
+      // don't remove it from sessions so reconnect can reattach.
+      if (sshManager.isTmuxAvailable(connectionId)) {
+        session.sshStream = null
+        session.status = 'idle'
+        this.sendStatus(sessionId, 'idle')
+      } else {
+        session.status = 'idle'
+        session.awaitingResponse = false
+        this.send('pty:exit', sessionId, 0)
+        sshManager.removeSession(connectionId, sessionId)
+        this.sessions.delete(sessionId)
+      }
+    })
+
+    stream.stderr.on('data', (data: Buffer) => {
+      this.handleData(sessionId, session, data.toString())
+    })
+  }
+
+  /** Reattach all SSH sessions for a given connection after reconnect */
+  reattachConnection(connectionId: string): void {
+    for (const [sessionId, session] of this.sessions) {
+      if (session.connectionId !== connectionId) continue
+      if (!sshManager.isTmuxAvailable(connectionId)) continue
+
+      // Session still tracked but stream is dead — reattach via tmux
+      this.send(
+        'pty:data',
+        sessionId,
+        '\r\n\x1b[33m--- reconnecting to remote session ---\x1b[0m\r\n'
+      )
+      session.status = 'running'
+      this.sendStatus(sessionId, 'running')
+
+      sshManager
+        .reattachTmux(connectionId, 80, 24, sessionId)
+        .then((stream) => {
+          this.attachSSHStream(sessionId, session, connectionId, stream)
+        })
+        .catch((err) => {
+          // Tmux session may have died — show error but keep session for manual retry
+          this.send(
+            'pty:data',
+            sessionId,
+            `\r\n\x1b[31m[Reattach failed] ${err.message}\x1b[0m\r\n`
+          )
+          session.status = 'error'
+          this.sendStatus(sessionId, 'error')
+        })
+    }
   }
 
   private handleData(sessionId: string, session: PtySession, data: string): void {
@@ -327,9 +380,11 @@ class PtyManager {
       try {
         if (session.sshStream) {
           session.sshStream.close()
-          if (session.connectionId) {
-            sshManager.removeSession(session.connectionId, sessionId)
-          }
+        }
+        if (session.connectionId) {
+          // Soft kill: just close the SSH stream. The tmux session stays alive
+          // on the remote server so we can reattach later.
+          sshManager.removeSession(session.connectionId, sessionId)
         } else if (session.process) {
           session.process.kill()
         }
@@ -338,6 +393,15 @@ class PtyManager {
       }
       this.sessions.delete(sessionId)
     }
+  }
+
+  /** Hard kill: also destroy the remote tmux session (for archive/delete) */
+  killRemote(sessionId: string): void {
+    const session = this.sessions.get(sessionId)
+    if (session?.connectionId && sshManager.isTmuxAvailable(session.connectionId)) {
+      sshManager.killTmuxSession(session.connectionId, sessionId).catch(() => {})
+    }
+    this.kill(sessionId)
   }
 
   pause(sessionId: string): void {

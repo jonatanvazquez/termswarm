@@ -137,9 +137,13 @@ export function ConversationItem({ conversation }: ConversationItemProps) {
   const handleConfirm = (e: React.MouseEvent) => {
     e.stopPropagation()
     if (confirming === 'delete') {
+      // Hard kill: destroy remote tmux session before closing
+      window.api.ptyKillRemote(conversation.id).catch(() => {})
       closeTab(conversation.id)
       deleteConversation(conversation.id)
     } else if (confirming === 'archive') {
+      // Hard kill: destroy remote tmux session before archiving
+      window.api.ptyKillRemote(conversation.id).catch(() => {})
       archiveConversation(conversation.id)
       closeTab(conversation.id)
     }

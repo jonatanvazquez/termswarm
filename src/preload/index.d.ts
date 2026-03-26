@@ -34,6 +34,7 @@ declare global {
       ptyWrite: (sessionId: string, data: string) => void
       ptyResize: (sessionId: string, cols: number, rows: number) => void
       ptyKill: (sessionId: string) => Promise<void>
+      ptyKillRemote: (sessionId: string) => Promise<void>
       ptyPause: (sessionId: string) => Promise<void>
       ptyResume: (sessionId: string) => Promise<void>
       onPtyData: (callback: (sessionId: string, data: string) => void) => CleanupFn
