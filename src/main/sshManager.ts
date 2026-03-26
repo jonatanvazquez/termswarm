@@ -239,13 +239,13 @@ class SSHManager {
 
         if (managed.tmuxAvailable) {
           const tmuxName = this.tmuxSessionName(sessionId)
-          // Build the inner command that tmux will run
-          const innerCmd = command
-            ? `cd ${shellEscape(cwd)} && ${command}`
-            : `cd ${shellEscape(cwd)}`
-          // Try to attach to existing session, or create a new one
+          // Use -c for working directory. For commands (claude mode), pass as tmux argument.
+          // For terminal mode (no command), omit so tmux starts an interactive shell.
+          const newCmd = command
+            ? `tmux new-session -s ${shellEscape(tmuxName)} -c ${shellEscape(cwd)} ${shellEscape(command)}`
+            : `tmux new-session -s ${shellEscape(tmuxName)} -c ${shellEscape(cwd)}`
           stream.write(
-            `${fixPath} && tmux has-session -t ${shellEscape(tmuxName)} 2>/dev/null && tmux attach -t ${shellEscape(tmuxName)} || tmux new-session -s ${shellEscape(tmuxName)} ${shellEscape(innerCmd)}\n`
+            `${fixPath} && (tmux has-session -t ${shellEscape(tmuxName)} 2>/dev/null && tmux attach -t ${shellEscape(tmuxName)} || ${newCmd})\n`
           )
         } else {
           // Fallback: no tmux, run directly as before
