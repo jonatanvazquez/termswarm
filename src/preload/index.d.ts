@@ -2,10 +2,13 @@ import { ElectronAPI } from '@electron-toolkit/preload'
 import type { ConversationStatus } from '../shared/types'
 import type { GitStatusResult, GitLogResult, GitPullResult } from '../shared/gitTypes'
 import type {
-  AndroidEmulator,
-  IOSSimulator,
-  EmulatorListResult
-} from '../shared/emulatorTypes'
+  SSHConnection,
+  SSHConnectionSaved,
+  SSHConnectionStatus,
+  SFTPEntry,
+  GitHubRepo
+} from '../shared/sshTypes'
+import type { AndroidEmulator, IOSSimulator, EmulatorListResult } from '../shared/emulatorTypes'
 import type { UpdateStatus } from '../shared/updateTypes'
 
 type CleanupFn = () => void
@@ -25,7 +28,8 @@ declare global {
         sessionId: string,
         cwd: string,
         args?: string[],
-        mode?: 'claude' | 'terminal'
+        mode?: 'claude' | 'terminal',
+        connectionId?: string
       ) => Promise<string>
       ptyWrite: (sessionId: string, data: string) => void
       ptyResize: (sessionId: string, cols: number, rows: number) => void
@@ -34,9 +38,7 @@ declare global {
       ptyResume: (sessionId: string) => Promise<void>
       onPtyData: (callback: (sessionId: string, data: string) => void) => CleanupFn
       onPtyExit: (callback: (sessionId: string, exitCode: number) => void) => CleanupFn
-      onPtyStatus: (
-        callback: (sessionId: string, status: ConversationStatus) => void
-      ) => CleanupFn
+      onPtyStatus: (callback: (sessionId: string, status: ConversationStatus) => void) => CleanupFn
       onPtyMemory: (callback: (stats: Record<string, number>) => void) => CleanupFn
 
       // Claude session fork
@@ -56,16 +58,39 @@ declare global {
       loadUILayout: () => Promise<unknown>
       saveUILayout: (data: unknown) => void
 
-      // Git
-      gitIsRepo: (cwd: string) => Promise<boolean>
-      gitGetStatus: (cwd: string) => Promise<GitStatusResult>
-      gitGetLog: (cwd: string, count?: number) => Promise<GitLogResult>
-      gitStage: (cwd: string, paths: string[]) => Promise<void>
-      gitUnstage: (cwd: string, paths: string[]) => Promise<void>
-      gitStageAll: (cwd: string) => Promise<void>
-      gitUnstageAll: (cwd: string) => Promise<void>
-      gitCommit: (cwd: string, message: string) => Promise<void>
-      gitPull: (cwd: string) => Promise<GitPullResult>
+      // SSH
+      sshConnect: (config: SSHConnection) => Promise<void>
+      sshDisconnect: (connectionId: string) => Promise<void>
+      sshTestConnection: (config: SSHConnection) => Promise<{ success: boolean; error?: string }>
+      sshListDir: (connectionId: string, path: string) => Promise<SFTPEntry[]>
+      sshReconnect: (connectionId: string) => Promise<void>
+      githubListRepos: (
+        token: string
+      ) => Promise<{ success: boolean; repos?: GitHubRepo[]; error?: string }>
+      sshGitClone: (
+        connectionId: string,
+        repoUrl: string,
+        targetDir: string
+      ) => Promise<{ success: boolean; error?: string; path?: string; name?: string }>
+      onSshStatus: (
+        callback: (connectionId: string, status: SSHConnectionStatus, error?: string) => void
+      ) => CleanupFn
+      onSshReconnected: (callback: (connectionId: string) => void) => CleanupFn
+
+      // Connection registry
+      loadConnections: () => Promise<SSHConnectionSaved[] | null>
+      saveConnections: (data: SSHConnectionSaved[]) => void
+
+      // Git (with optional connectionId for remote projects)
+      gitIsRepo: (cwd: string, connectionId?: string) => Promise<boolean>
+      gitGetStatus: (cwd: string, connectionId?: string) => Promise<GitStatusResult>
+      gitGetLog: (cwd: string, count?: number, connectionId?: string) => Promise<GitLogResult>
+      gitStage: (cwd: string, paths: string[], connectionId?: string) => Promise<void>
+      gitUnstage: (cwd: string, paths: string[], connectionId?: string) => Promise<void>
+      gitStageAll: (cwd: string, connectionId?: string) => Promise<void>
+      gitUnstageAll: (cwd: string, connectionId?: string) => Promise<void>
+      gitCommit: (cwd: string, message: string, connectionId?: string) => Promise<void>
+      gitPull: (cwd: string, connectionId?: string) => Promise<GitPullResult>
 
       // Emulators
       platform: string

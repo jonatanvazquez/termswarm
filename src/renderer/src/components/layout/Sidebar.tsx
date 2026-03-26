@@ -48,7 +48,7 @@ export function Sidebar() {
     const activeProject = projects.find((p) => p.id === activeProjectId)
     const path = activeProject?.path
     if (!path || pulling) return
-    const result = await pullAction(path)
+    const result = await pullAction(path, activeProject?.connectionId)
     if (!result.success) {
       setPullMessage({ text: result.message, error: true })
     }
@@ -59,7 +59,7 @@ export function Sidebar() {
     const activeProject = projects.find((p) => p.id === activeProjectId)
     const path = activeProject?.path
     if (!path) return
-    startPolling(path)
+    startPolling(path, activeProject?.connectionId)
     return () => stopPolling(path)
   }, [activeProjectId, projects, startPolling, stopPolling])
 

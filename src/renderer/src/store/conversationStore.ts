@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import type { Tab } from '../types'
 import { useTerminalStore } from './terminalStore'
 import { useProjectStore } from './projectStore'
+import { useConnectionStore } from './connectionStore'
 
 // Module-level flag — not reactive, read synchronously in useState initializers.
 // Split into check (non-destructive, safe for StrictMode double-invoke) and clear.
@@ -69,12 +70,42 @@ export const useConversationStore = create<ConversationState>((set) => ({
           type: conversation?.type,
           status: conversation?.status,
           claudeSessionId: conversation?.claudeSessionId,
-          args
+          args,
+          connectionId: project.connectionId
         })
 
-        window.api.ptySpawn(conversationId, project.path, args, mode).catch((err) => {
-          console.error('Failed to spawn PTY:', err)
-        })
+        // Auto-connect SSH if needed before spawning
+        const spawnPty = (): void => {
+          window.api
+            .ptySpawn(conversationId, project.path, args, mode, project.connectionId)
+            .catch((err) => {
+              console.error('Failed to spawn PTY:', err)
+            })
+        }
+
+        if (project.connectionId) {
+          const connStore = useConnectionStore.getState()
+          const status = connStore.statuses[project.connectionId]?.status
+          if (status !== 'connected' && status !== 'connecting') {
+            console.log('[ConvStore] auto-connecting SSH before spawn:', project.connectionId)
+            connStore.connect(project.connectionId).then(spawnPty)
+          } else if (status === 'connecting') {
+            // Wait for connection to complete
+            const unsub = useConnectionStore.subscribe((state) => {
+              const s = state.statuses[project.connectionId!]?.status
+              if (s === 'connected') {
+                unsub()
+                spawnPty()
+              } else if (s === 'error') {
+                unsub()
+              }
+            })
+          } else {
+            spawnPty()
+          }
+        } else {
+          spawnPty()
+        }
       } else {
         console.error('[ConvStore] project not found:', projectId)
       }
@@ -90,7 +121,12 @@ export const useConversationStore = create<ConversationState>((set) => ({
       // Save terminal buffer before killing so it can be restored on reopen
       const { serializeBuffer, setPendingContent, disposeInstance } = useTerminalStore.getState()
       const content = serializeBuffer(conversationId)
-      console.log('[ConvStore] closeTab serialized buffer:', content.length, 'chars, first 200:', JSON.stringify(content.slice(0, 200)))
+      console.log(
+        '[ConvStore] closeTab serialized buffer:',
+        content.length,
+        'chars, first 200:',
+        JSON.stringify(content.slice(0, 200))
+      )
       if (content) {
         setPendingContent(conversationId, content)
         console.log('[ConvStore] closeTab setPendingContent OK')

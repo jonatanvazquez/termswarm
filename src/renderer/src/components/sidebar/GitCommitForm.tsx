@@ -2,9 +2,10 @@ import { useGitStore } from '../../store/gitStore'
 
 interface GitCommitFormProps {
   projectPath: string
+  connectionId?: string
 }
 
-export function GitCommitForm({ projectPath }: GitCommitFormProps) {
+export function GitCommitForm({ projectPath, connectionId }: GitCommitFormProps) {
   const ps = useGitStore((s) => s.projects[projectPath])
   const setCommitMessage = useGitStore((s) => s.setCommitMessage)
   const commit = useGitStore((s) => s.commit)
@@ -17,7 +18,7 @@ export function GitCommitForm({ projectPath }: GitCommitFormProps) {
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && canCommit) {
       e.preventDefault()
-      commit(projectPath)
+      commit(projectPath, connectionId)
     }
   }
 
@@ -33,7 +34,7 @@ export function GitCommitForm({ projectPath }: GitCommitFormProps) {
       />
       <button
         disabled={!canCommit}
-        onClick={() => commit(projectPath)}
+        onClick={() => commit(projectPath, connectionId)}
         className="w-full rounded bg-accent px-2 py-1 text-[11px] font-medium text-white transition-colors hover:bg-accent/80 disabled:cursor-not-allowed disabled:opacity-40"
       >
         {committing ? 'Committing...' : `Commit${stagedCount > 0 ? ` (${stagedCount})` : ''}`}

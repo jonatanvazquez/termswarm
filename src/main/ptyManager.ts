@@ -4,12 +4,16 @@ import { existsSync, readdirSync } from 'fs'
 import { exec } from 'child_process'
 import { join } from 'path'
 import type { BrowserWindow } from 'electron'
+import type { ClientChannel } from 'ssh2'
 import type { ConversationStatus } from '../shared/types'
+import { sshManager } from './sshManager'
 
 type SpawnMode = 'claude' | 'terminal'
 
 interface PtySession {
-  process: pty.IPty
+  process: pty.IPty | null
+  sshStream: ClientChannel | null
+  connectionId?: string
   lastDataTime: number
   lastOutput: string
   promptDetected: boolean
@@ -106,10 +110,16 @@ class PtyManager {
     sessionId: string,
     cwd: string,
     args: string[] = [],
-    mode: SpawnMode = 'claude'
+    mode: SpawnMode = 'claude',
+    connectionId?: string
   ): string {
     if (this.sessions.has(sessionId)) {
       this.kill(sessionId)
+    }
+
+    if (connectionId) {
+      this.spawnSSH(sessionId, cwd, args, mode, connectionId)
+      return sessionId
     }
 
     const resolvedCwd = expandTilde(cwd)
@@ -135,6 +145,7 @@ class PtyManager {
 
     const session: PtySession = {
       process: ptyProcess,
+      sshStream: null,
       lastDataTime: Date.now(),
       lastOutput: '',
       promptDetected: false,
@@ -153,49 +164,7 @@ class PtyManager {
     this.startMemoryChecker()
 
     ptyProcess.onData((data) => {
-      session.lastDataTime = Date.now()
-
-      if (mode === 'claude') {
-        // Keep last ~2KB of output for prompt detection
-        session.lastOutput = (session.lastOutput + data).slice(-2048)
-        const wasDetected = session.promptDetected
-        session.promptDetected = detectPrompt(session.lastOutput)
-
-        // Detect standalone BEL (not inside OSC sequences) — Claude Code
-        // sends BEL when it finishes a task (this is what makes the terminal
-        // "bounce" on macOS). Treat it as a strong prompt signal.
-        const withoutOsc = data.replace(/\x1b\][^\x07]*\x07/g, '')
-        if (withoutOsc.includes('\x07')) {
-          session.promptDetected = true
-          session.belReceived = true
-          if (session.promptDetectedAt === null) {
-            session.promptDetectedAt = Date.now()
-          }
-        }
-
-        // Track when prompt was first detected continuously
-        if (session.promptDetected && !wasDetected && session.promptDetectedAt === null) {
-          session.promptDetectedAt = Date.now()
-        } else if (!session.promptDetected) {
-          session.promptDetectedAt = null
-        }
-
-        // Recovery: if we were 'waiting' but prompt disappeared, Claude resumed work.
-        // Gate behind awaitingResponse so typing on the prompt doesn't flicker to 'running'.
-        if (session.status === 'waiting' && !session.promptDetected && session.awaitingResponse) {
-          session.status = 'running'
-          session.belReceived = false
-          this.sendStatus(sessionId, 'running')
-        }
-      }
-
-      // Only switch to 'running' when awaiting a response
-      if (session.awaitingResponse && session.status !== 'running') {
-        session.status = 'running'
-        this.sendStatus(sessionId, 'running')
-      }
-
-      this.send('pty:data', sessionId, data)
+      this.handleData(sessionId, session, data)
     })
 
     ptyProcess.onExit(({ exitCode }) => {
@@ -207,6 +176,112 @@ class PtyManager {
     })
 
     return sessionId
+  }
+
+  private spawnSSH(
+    sessionId: string,
+    cwd: string,
+    args: string[],
+    mode: SpawnMode,
+    connectionId: string
+  ): void {
+    let command: string | undefined
+    if (mode === 'claude') {
+      const claudeArgs = ['--dangerously-skip-permissions', ...args].join(' ')
+      command = `claude ${claudeArgs}`
+    }
+
+    const session: PtySession = {
+      process: null,
+      sshStream: null,
+      connectionId,
+      lastDataTime: Date.now(),
+      lastOutput: '',
+      promptDetected: false,
+      promptDetectedAt: null,
+      belReceived: false,
+      status: 'running',
+      awaitingResponse: false,
+      mode
+    }
+
+    this.sessions.set(sessionId, session)
+    this.startStatusChecker()
+    this.startMemoryChecker()
+
+    sshManager
+      .openShell(connectionId, cwd, 80, 24, sessionId, command)
+      .then((stream) => {
+        session.sshStream = stream
+
+        stream.on('data', (data: Buffer) => {
+          this.handleData(sessionId, session, data.toString())
+        })
+
+        stream.on('close', () => {
+          session.status = 'idle'
+          session.awaitingResponse = false
+          this.send('pty:exit', sessionId, 0)
+          sshManager.removeSession(connectionId, sessionId)
+          this.sessions.delete(sessionId)
+        })
+
+        stream.stderr.on('data', (data: Buffer) => {
+          this.handleData(sessionId, session, data.toString())
+        })
+      })
+      .catch((err) => {
+        session.status = 'error'
+        this.send('pty:data', sessionId, `\r\n[SSH Error] ${err.message}\r\n`)
+        this.send('pty:exit', sessionId, 1)
+        this.sessions.delete(sessionId)
+      })
+  }
+
+  private handleData(sessionId: string, session: PtySession, data: string): void {
+    session.lastDataTime = Date.now()
+
+    if (session.mode === 'claude') {
+      // Keep last ~2KB of output for prompt detection
+      session.lastOutput = (session.lastOutput + data).slice(-2048)
+      const wasDetected = session.promptDetected
+      session.promptDetected = detectPrompt(session.lastOutput)
+
+      // Detect standalone BEL (not inside OSC sequences) — Claude Code
+      // sends BEL when it finishes a task (this is what makes the terminal
+      // "bounce" on macOS). Treat it as a strong prompt signal.
+      const withoutOsc = data.replace(/\x1b\][^\x07]*\x07/g, '')
+      if (withoutOsc.includes('\x07')) {
+        session.promptDetected = true
+        session.belReceived = true
+        if (session.promptDetectedAt === null) {
+          session.promptDetectedAt = Date.now()
+        }
+      }
+
+      // Track when prompt was first detected continuously
+      if (session.promptDetected && !wasDetected && session.promptDetectedAt === null) {
+        session.promptDetectedAt = Date.now()
+      } else if (!session.promptDetected) {
+        session.promptDetectedAt = null
+      }
+
+      // Recovery: if we were 'waiting' but prompt disappeared, Claude resumed work.
+      // Gate behind awaitingResponse so typing on the prompt doesn't flicker to 'running'.
+      if (session.status === 'waiting' && !session.promptDetected && session.awaitingResponse) {
+        session.status = 'running'
+        session.belReceived = false
+        this.sendStatus(sessionId, 'running')
+      }
+    }
+
+    // Only switch to 'running' when awaiting a response
+    if (session.awaitingResponse && session.status !== 'running') {
+      session.status = 'running'
+      this.sendStatus(sessionId, 'running')
+    }
+
+    this.send('pty:data', sessionId, data)
   }
 
   write(sessionId: string, data: string): void {
@@ -222,8 +297,12 @@ class PtyManager {
           session.awaitingResponse = true
         }
       }
-      // For terminal mode, no special handling needed
-      session.process.write(data)
+      // Write to either local PTY or SSH stream
+      if (session.sshStream) {
+        session.sshStream.write(data)
+      } else if (session.process) {
+        session.process.write(data)
+      }
     }
   }
 
@@ -231,7 +310,11 @@ class PtyManager {
     const session = this.sessions.get(sessionId)
     if (session) {
       try {
-        session.process.resize(cols, rows)
+        if (session.sshStream) {
+          session.sshStream.setWindow(rows, cols, rows * 16, cols * 8)
+        } else if (session.process) {
+          session.process.resize(cols, rows)
+        }
       } catch {
         // Process may have already exited
       }
@@ -242,7 +325,14 @@ class PtyManager {
     const session = this.sessions.get(sessionId)
     if (session) {
       try {
-        session.process.kill()
+        if (session.sshStream) {
+          session.sshStream.close()
+          if (session.connectionId) {
+            sshManager.removeSession(session.connectionId, sessionId)
+          }
+        } else if (session.process) {
+          session.process.kill()
+        }
       } catch {
         // Already dead
       }
@@ -254,9 +344,16 @@ class PtyManager {
     const session = this.sessions.get(sessionId)
     if (session) {
       try {
-        process.kill(session.process.pid, 'SIGTSTP')
-        session.status = 'paused'
-        this.sendStatus(sessionId, 'paused')
+        if (session.sshStream) {
+          // Send Ctrl+Z to the remote shell
+          session.sshStream.write('\x1a')
+          session.status = 'paused'
+          this.sendStatus(sessionId, 'paused')
+        } else if (session.process) {
+          process.kill(session.process.pid, 'SIGTSTP')
+          session.status = 'paused'
+          this.sendStatus(sessionId, 'paused')
+        }
       } catch {
         // Process may have already exited
       }
@@ -267,10 +364,18 @@ class PtyManager {
     const session = this.sessions.get(sessionId)
     if (session) {
       try {
-        process.kill(session.process.pid, 'SIGCONT')
-        session.status = 'running'
-        session.lastDataTime = Date.now()
-        this.sendStatus(sessionId, 'running')
+        if (session.sshStream) {
+          // Send 'fg' to resume the background job
+          session.sshStream.write('fg\n')
+          session.status = 'running'
+          session.lastDataTime = Date.now()
+          this.sendStatus(sessionId, 'running')
+        } else if (session.process) {
+          process.kill(session.process.pid, 'SIGCONT')
+          session.status = 'running'
+          session.lastDataTime = Date.now()
+          this.sendStatus(sessionId, 'running')
+        }
       } catch {
         // Process may have already exited
       }
@@ -309,7 +414,8 @@ class PtyManager {
           }
         } else {
           // Claude mode: detect when Claude is waiting for input
-          const sincePrompt = session.promptDetectedAt !== null ? now - session.promptDetectedAt : null
+          const sincePrompt =
+            session.promptDetectedAt !== null ? now - session.promptDetectedAt : null
           if (session.belReceived && session.promptDetected) {
             // BEL + prompt: Claude rang the bell — task finished
             session.status = 'waiting'
@@ -374,6 +480,7 @@ class PtyManager {
 
         // DFS to sum RSS of entire process tree
         for (const [sessionId, session] of this.sessions) {
+          if (!session.process) continue // SSH sessions have no local process
           const rootPid = session.process.pid
           let totalKB = 0
           const stack = [rootPid]

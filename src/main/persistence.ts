@@ -105,3 +105,28 @@ export function saveUILayout(data: unknown): void {
     console.error('Failed to save UI layout:', err)
   }
 }
+
+function getConnectionsFile(): string {
+  return join(getDataDir(), 'connections.json')
+}
+
+export function loadConnections(): unknown {
+  try {
+    if (!existsSync(getConnectionsFile())) return null
+    const raw = readFileSync(getConnectionsFile(), 'utf-8')
+    return JSON.parse(raw)
+  } catch {
+    return null
+  }
+}
+
+export function saveConnections(data: unknown): void {
+  try {
+    if (!existsSync(getDataDir())) {
+      mkdirSync(getDataDir(), { recursive: true })
+    }
+    writeFileSync(getConnectionsFile(), JSON.stringify(data, null, 2), 'utf-8')
+  } catch (err) {
+    console.error('Failed to save connections:', err)
+  }
+}

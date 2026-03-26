@@ -7,9 +7,22 @@ import { electronApp, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { ptyManager } from './ptyManager'
 import { gitManager } from './gitManager'
+import { sshManager } from './sshManager'
 import { emulatorManager } from './emulatorManager'
 import { updateManager } from './updateManager'
-import { loadProjects, saveProjects, loadBuffers, saveBuffers, loadSettings, saveSettings, loadUILayout, saveUILayout } from './persistence'
+import {
+  loadProjects,
+  saveProjects,
+  loadBuffers,
+  saveBuffers,
+  loadSettings,
+  saveSettings,
+  loadUILayout,
+  saveUILayout,
+  loadConnections,
+  saveConnections
+} from './persistence'
+import type { SSHConnection, GitHubRepo } from '../shared/sshTypes'
 
 /** Check TCP reachability using Node.js net (bypasses Chromium network stack). */
 function probePort(host: string, port: number, timeoutMs = 3000): Promise<boolean> {
@@ -142,8 +155,15 @@ app.whenReady().then(() => {
 
   ipcMain.handle(
     'pty:spawn',
-    (_e, sessionId: string, cwd: string, args?: string[], mode?: 'claude' | 'terminal') => {
-      return ptyManager.spawn(sessionId, cwd, args, mode)
+    (
+      _e,
+      sessionId: string,
+      cwd: string,
+      args?: string[],
+      mode?: 'claude' | 'terminal',
+      connectionId?: string
+    ) => {
+      return ptyManager.spawn(sessionId, cwd, args, mode, connectionId)
     }
   )
 
@@ -230,22 +250,173 @@ app.whenReady().then(() => {
     saveUILayout(data)
   })
 
-  // Git handlers
-  ipcMain.handle('git:isRepo', (_e, cwd: string) => gitManager.isGitRepo(cwd))
-  ipcMain.handle('git:status', (_e, cwd: string) => gitManager.getStatus(cwd))
-  ipcMain.handle('git:log', (_e, cwd: string, count?: number) => gitManager.getLog(cwd, count))
-  ipcMain.handle('git:stage', (_e, cwd: string, paths: string[]) =>
-    gitManager.stageFiles(cwd, paths)
+  // SSH handlers
+  ipcMain.handle('ssh:connect', async (_e, config: SSHConnection) => {
+    await sshManager.connect(config)
+  })
+
+  ipcMain.handle('ssh:disconnect', (_e, connectionId: string) => {
+    sshManager.disconnect(connectionId)
+  })
+
+  ipcMain.handle('ssh:testConnection', async (_e, config: SSHConnection) => {
+    return sshManager.testConnection(config)
+  })
+
+  ipcMain.handle('ssh:listDir', async (_e, connectionId: string, path: string) => {
+    return sshManager.listDirectory(connectionId, path)
+  })
+
+  ipcMain.handle('ssh:reconnect', async (_e, connectionId: string) => {
+    await sshManager.reconnectManual(connectionId)
+  })
+
+  ipcMain.handle('github:listRepos', async (_e, token: string) => {
+    try {
+      const repos: GitHubRepo[] = []
+      let page = 1
+      const perPage = 100
+
+      // Fetch up to 300 repos (3 pages)
+      while (page <= 3) {
+        const res = await fetch(
+          `https://api.github.com/user/repos?per_page=${perPage}&page=${page}&sort=updated&affiliation=owner,collaborator,organization_member`,
+          {
+            headers: {
+              Authorization: `Bearer ${token}`,
+              Accept: 'application/vnd.github+json'
+            }
+          }
+        )
+
+        if (!res.ok) {
+          const body = await res.text()
+          return { success: false, error: `GitHub API error: ${res.status} ${body}` }
+        }
+
+        const data = (await res.json()) as Array<{
+          name: string
+          full_name: string
+          clone_url: string
+          description: string | null
+          private: boolean
+          updated_at: string
+        }>
+
+        for (const r of data) {
+          repos.push({
+            name: r.name,
+            fullName: r.full_name,
+            cloneUrl: r.clone_url,
+            description: r.description,
+            private: r.private,
+            updatedAt: r.updated_at
+          })
+        }
+
+        if (data.length < perPage) break
+        page++
+      }
+
+      return { success: true, repos }
+    } catch (err) {
+      return { success: false, error: (err as Error).message }
+    }
+  })
+
+  ipcMain.handle(
+    'ssh:gitClone',
+    async (_e, connectionId: string, repoUrl: string, targetDir: string) => {
+      try {
+        // Extract repo name from URL for the clone target
+        const repoName = repoUrl
+          .replace(/\.git$/, '')
+          .split('/')
+          .pop()
+        if (!repoName) throw new Error('Invalid repository URL')
+
+        // Resolve ~ to actual home directory on the remote
+        let resolvedDir = targetDir
+        if (resolvedDir.startsWith('~')) {
+          const homeResult = await sshManager.exec(connectionId, 'echo $HOME')
+          const home = homeResult.stdout.trim()
+          if (home) resolvedDir = resolvedDir.replace(/^~/, home)
+        }
+
+        const clonePath = `${resolvedDir}/${repoName}`
+
+        // Check if directory already exists
+        const checkResult = await sshManager.exec(
+          connectionId,
+          `test -d ${clonePath} && echo EXISTS`
+        )
+        if (checkResult.stdout.trim() === 'EXISTS') {
+          // Directory exists — just use it instead of failing
+          return { success: true, path: clonePath, name: repoName }
+        }
+
+        // Ensure target directory exists
+        await sshManager.exec(connectionId, `mkdir -p ${resolvedDir}`)
+
+        // Inject token into HTTPS URL if available
+        let authUrl = repoUrl
+        const managed = sshManager.getConnection(connectionId)
+        const token = managed?.config.gitToken
+        if (token && repoUrl.startsWith('https://')) {
+          authUrl = repoUrl.replace('https://', `https://oauth2:${token}@`)
+        }
+
+        // Clone the repo
+        const result = await sshManager.exec(connectionId, `git clone ${authUrl} ${clonePath} 2>&1`)
+
+        if (result.code !== 0) {
+          return { success: false, error: result.stderr || result.stdout }
+        }
+
+        return { success: true, path: clonePath, name: repoName }
+      } catch (err) {
+        return { success: false, error: (err as Error).message }
+      }
+    }
   )
-  ipcMain.handle('git:unstage', (_e, cwd: string, paths: string[]) =>
-    gitManager.unstageFiles(cwd, paths)
+
+  // Connection registry persistence
+  ipcMain.handle('connections:load', () => {
+    return loadConnections()
+  })
+
+  ipcMain.on('connections:save', (_e, data: unknown) => {
+    saveConnections(data)
+  })
+
+  // Git handlers (with optional connectionId)
+  ipcMain.handle('git:isRepo', (_e, cwd: string, connectionId?: string) =>
+    gitManager.isGitRepo(cwd, connectionId)
   )
-  ipcMain.handle('git:stageAll', (_e, cwd: string) => gitManager.stageAll(cwd))
-  ipcMain.handle('git:unstageAll', (_e, cwd: string) => gitManager.unstageAll(cwd))
-  ipcMain.handle('git:commit', (_e, cwd: string, message: string) =>
-    gitManager.commit(cwd, message)
+  ipcMain.handle('git:status', (_e, cwd: string, connectionId?: string) =>
+    gitManager.getStatus(cwd, connectionId)
   )
-  ipcMain.handle('git:pull', (_e, cwd: string) => gitManager.pull(cwd))
+  ipcMain.handle('git:log', (_e, cwd: string, count?: number, connectionId?: string) =>
+    gitManager.getLog(cwd, count, connectionId)
+  )
+  ipcMain.handle('git:stage', (_e, cwd: string, paths: string[], connectionId?: string) =>
+    gitManager.stageFiles(cwd, paths, connectionId)
+  )
+  ipcMain.handle('git:unstage', (_e, cwd: string, paths: string[], connectionId?: string) =>
+    gitManager.unstageFiles(cwd, paths, connectionId)
+  )
+  ipcMain.handle('git:stageAll', (_e, cwd: string, connectionId?: string) =>
+    gitManager.stageAll(cwd, connectionId)
+  )
+  ipcMain.handle('git:unstageAll', (_e, cwd: string, connectionId?: string) =>
+    gitManager.unstageAll(cwd, connectionId)
+  )
+  ipcMain.handle('git:commit', (_e, cwd: string, message: string, connectionId?: string) =>
+    gitManager.commit(cwd, message, connectionId)
+  )
+  ipcMain.handle('git:pull', (_e, cwd: string, connectionId?: string) =>
+    gitManager.pull(cwd, connectionId)
+  )
 
   // Emulator handlers
   ipcMain.handle('emulator:listAndroid', () => emulatorManager.listAndroid())
@@ -282,6 +453,7 @@ app.whenReady().then(() => {
 
   const mainWindow = createWindow()
   ptyManager.setMainWindow(mainWindow)
+  sshManager.setMainWindow(mainWindow)
 
   if (app.isPackaged) {
     updateManager.init(mainWindow, app.getVersion())
@@ -299,7 +471,9 @@ app.whenReady().then(() => {
     webContents.setBackgroundThrottling(false)
 
     const registerEnterHandler = (): void => {
-      webContents.executeJavaScript(`
+      webContents
+        .executeJavaScript(
+          `
         window.__tsEnter = function() {
           var el = document.activeElement;
           if (!el) return;
@@ -311,7 +485,9 @@ app.whenReady().then(() => {
           if (f) { f.requestSubmit(); return; }
           if (el.tagName==='BUTTON'||el.tagName==='A'||(el.getAttribute&&el.getAttribute('role')==='button')) el.click();
         };
-      `).catch(() => {})
+      `
+        )
+        .catch(() => {})
     }
     webContents.on('dom-ready', registerEnterHandler)
     webContents.on('did-navigate', registerEnterHandler)
@@ -324,6 +500,7 @@ app.whenReady().then(() => {
 
   mainWindow.on('closed', () => {
     ptyManager.killAll()
+    sshManager.disconnectAll()
     updateManager.destroy()
   })
 
@@ -337,6 +514,7 @@ app.whenReady().then(() => {
 
 app.on('before-quit', () => {
   ptyManager.killAll()
+  sshManager.disconnectAll()
 })
 
 app.on('window-all-closed', () => {

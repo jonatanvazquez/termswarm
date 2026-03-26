@@ -3,10 +3,13 @@ import { electronAPI } from '@electron-toolkit/preload'
 import type { ConversationStatus } from '../shared/types'
 import type { GitStatusResult, GitLogResult, GitPullResult } from '../shared/gitTypes'
 import type {
-  AndroidEmulator,
-  IOSSimulator,
-  EmulatorListResult
-} from '../shared/emulatorTypes'
+  SSHConnection,
+  SSHConnectionSaved,
+  SSHConnectionStatus,
+  SFTPEntry,
+  GitHubRepo
+} from '../shared/sshTypes'
+import type { AndroidEmulator, IOSSimulator, EmulatorListResult } from '../shared/emulatorTypes'
 import type { UpdateStatus } from '../shared/updateTypes'
 
 type CleanupFn = () => void
@@ -23,8 +26,9 @@ const api = {
     sessionId: string,
     cwd: string,
     args?: string[],
-    mode?: 'claude' | 'terminal'
-  ): Promise<string> => ipcRenderer.invoke('pty:spawn', sessionId, cwd, args, mode),
+    mode?: 'claude' | 'terminal',
+    connectionId?: string
+  ): Promise<string> => ipcRenderer.invoke('pty:spawn', sessionId, cwd, args, mode, connectionId),
   ptyWrite: (sessionId: string, data: string): void => {
     ipcRenderer.send('pty:write', sessionId, data)
   },
@@ -49,9 +53,7 @@ const api = {
     ipcRenderer.on('pty:exit', handler)
     return () => ipcRenderer.removeListener('pty:exit', handler)
   },
-  onPtyStatus: (
-    callback: (sessionId: string, status: ConversationStatus) => void
-  ): CleanupFn => {
+  onPtyStatus: (callback: (sessionId: string, status: ConversationStatus) => void): CleanupFn => {
     const handler = (
       _e: Electron.IpcRendererEvent,
       sessionId: string,
@@ -75,7 +77,8 @@ const api = {
     projectPath: string,
     sourceSessionId: string,
     newSessionId: string
-  ): Promise<boolean> => ipcRenderer.invoke('claude:forkSession', projectPath, sourceSessionId, newSessionId),
+  ): Promise<boolean> =>
+    ipcRenderer.invoke('claude:forkSession', projectPath, sourceSessionId, newSessionId),
 
   // Persistence
   loadProjects: (): Promise<unknown> => ipcRenderer.invoke('store:load'),
@@ -96,28 +99,80 @@ const api = {
     ipcRenderer.send('store:saveUILayout', data)
   },
 
-  // Git
-  gitIsRepo: (cwd: string): Promise<boolean> => ipcRenderer.invoke('git:isRepo', cwd),
-  gitGetStatus: (cwd: string): Promise<GitStatusResult> => ipcRenderer.invoke('git:status', cwd),
-  gitGetLog: (cwd: string, count?: number): Promise<GitLogResult> =>
-    ipcRenderer.invoke('git:log', cwd, count),
-  gitStage: (cwd: string, paths: string[]): Promise<void> =>
-    ipcRenderer.invoke('git:stage', cwd, paths),
-  gitUnstage: (cwd: string, paths: string[]): Promise<void> =>
-    ipcRenderer.invoke('git:unstage', cwd, paths),
-  gitStageAll: (cwd: string): Promise<void> => ipcRenderer.invoke('git:stageAll', cwd),
-  gitUnstageAll: (cwd: string): Promise<void> => ipcRenderer.invoke('git:unstageAll', cwd),
-  gitCommit: (cwd: string, message: string): Promise<void> =>
-    ipcRenderer.invoke('git:commit', cwd, message),
-  gitPull: (cwd: string): Promise<GitPullResult> => ipcRenderer.invoke('git:pull', cwd),
+  // SSH
+  sshConnect: (config: SSHConnection): Promise<void> => ipcRenderer.invoke('ssh:connect', config),
+  sshDisconnect: (connectionId: string): Promise<void> =>
+    ipcRenderer.invoke('ssh:disconnect', connectionId),
+  sshTestConnection: (config: SSHConnection): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('ssh:testConnection', config),
+  sshListDir: (connectionId: string, path: string): Promise<SFTPEntry[]> =>
+    ipcRenderer.invoke('ssh:listDir', connectionId, path),
+  sshReconnect: (connectionId: string): Promise<void> =>
+    ipcRenderer.invoke('ssh:reconnect', connectionId),
+  githubListRepos: (
+    token: string
+  ): Promise<{ success: boolean; repos?: GitHubRepo[]; error?: string }> =>
+    ipcRenderer.invoke('github:listRepos', token),
+  sshGitClone: (
+    connectionId: string,
+    repoUrl: string,
+    targetDir: string
+  ): Promise<{ success: boolean; error?: string; path?: string; name?: string }> =>
+    ipcRenderer.invoke('ssh:gitClone', connectionId, repoUrl, targetDir),
+  onSshStatus: (
+    callback: (connectionId: string, status: SSHConnectionStatus, error?: string) => void
+  ): CleanupFn => {
+    const handler = (
+      _e: Electron.IpcRendererEvent,
+      connectionId: string,
+      status: SSHConnectionStatus,
+      error?: string
+    ): void => {
+      callback(connectionId, status, error)
+    }
+    ipcRenderer.on('ssh:status', handler)
+    return () => ipcRenderer.removeListener('ssh:status', handler)
+  },
+  onSshReconnected: (callback: (connectionId: string) => void): CleanupFn => {
+    const handler = (_e: Electron.IpcRendererEvent, connectionId: string): void => {
+      callback(connectionId)
+    }
+    ipcRenderer.on('ssh:reconnected', handler)
+    return () => ipcRenderer.removeListener('ssh:reconnected', handler)
+  },
+
+  // Connection registry
+  loadConnections: (): Promise<SSHConnectionSaved[] | null> =>
+    ipcRenderer.invoke('connections:load'),
+  saveConnections: (data: SSHConnectionSaved[]): void => {
+    ipcRenderer.send('connections:save', data)
+  },
+
+  // Git (with optional connectionId)
+  gitIsRepo: (cwd: string, connectionId?: string): Promise<boolean> =>
+    ipcRenderer.invoke('git:isRepo', cwd, connectionId),
+  gitGetStatus: (cwd: string, connectionId?: string): Promise<GitStatusResult> =>
+    ipcRenderer.invoke('git:status', cwd, connectionId),
+  gitGetLog: (cwd: string, count?: number, connectionId?: string): Promise<GitLogResult> =>
+    ipcRenderer.invoke('git:log', cwd, count, connectionId),
+  gitStage: (cwd: string, paths: string[], connectionId?: string): Promise<void> =>
+    ipcRenderer.invoke('git:stage', cwd, paths, connectionId),
+  gitUnstage: (cwd: string, paths: string[], connectionId?: string): Promise<void> =>
+    ipcRenderer.invoke('git:unstage', cwd, paths, connectionId),
+  gitStageAll: (cwd: string, connectionId?: string): Promise<void> =>
+    ipcRenderer.invoke('git:stageAll', cwd, connectionId),
+  gitUnstageAll: (cwd: string, connectionId?: string): Promise<void> =>
+    ipcRenderer.invoke('git:unstageAll', cwd, connectionId),
+  gitCommit: (cwd: string, message: string, connectionId?: string): Promise<void> =>
+    ipcRenderer.invoke('git:commit', cwd, message, connectionId),
+  gitPull: (cwd: string, connectionId?: string): Promise<GitPullResult> =>
+    ipcRenderer.invoke('git:pull', cwd, connectionId),
 
   // Emulators
   platform: process.platform,
   emulatorListAndroid: (): Promise<EmulatorListResult<AndroidEmulator>> =>
     ipcRenderer.invoke('emulator:listAndroid'),
-  emulatorLaunchAndroid: (
-    avdName: string
-  ): Promise<{ success: boolean; error?: string }> =>
+  emulatorLaunchAndroid: (avdName: string): Promise<{ success: boolean; error?: string }> =>
     ipcRenderer.invoke('emulator:launchAndroid', avdName),
   emulatorListIOS: (): Promise<EmulatorListResult<IOSSimulator>> =>
     ipcRenderer.invoke('emulator:listIOS'),

@@ -1,11 +1,13 @@
 import { useEffect } from 'react'
 import { AppLayout } from './components/layout/AppLayout'
 import { SettingsPanel } from './components/settings/SettingsPanel'
+import { ConnectionManagerModal } from './components/connections/ConnectionManagerModal'
 import { usePtyListener } from './hooks/usePtyListener'
 import { useProjectStore } from './store/projectStore'
 import { useSettingsStore, BASE_ZOOM } from './store/settingsStore'
 import { useTerminalStore } from './store/terminalStore'
 import { useUIStore } from './store/uiStore'
+import { useConnectionStore } from './store/connectionStore'
 
 function saveBuffersToDisk(): void {
   const buffers = useTerminalStore.getState().serializeAllBuffers()
@@ -26,6 +28,7 @@ function App(): React.JSX.Element {
     useProjectStore.getState().loadFromDisk()
     useSettingsStore.getState().loadFromDisk()
     useUIStore.getState().loadFromDisk()
+    useConnectionStore.getState().loadFromDisk()
 
     // Load saved terminal buffers from disk into pendingContent
     window.api.loadBuffers().then((buffers) => {
@@ -47,15 +50,20 @@ function App(): React.JSX.Element {
     // Auto-update listener
     const cleanupUpdater = useSettingsStore.getState().initUpdateListener()
 
+    // SSH status listener
+    const cleanupSsh = useConnectionStore.getState().initStatusListener()
+
     return () => {
       clearInterval(interval)
       window.removeEventListener('beforeunload', handleBeforeUnload)
       cleanupUpdater()
+      cleanupSsh()
     }
   }, [])
 
   const zoom = useSettingsStore((s) => s.zoom)
   const settingsOpen = useSettingsStore((s) => s.settingsOpen)
+  const connectionManagerOpen = useConnectionStore((s) => s.managerOpen)
 
   // Use Electron's native zoom — works correctly with canvas/WebGL (xterm)
   useEffect(() => {
@@ -66,6 +74,7 @@ function App(): React.JSX.Element {
     <>
       <AppLayout />
       {settingsOpen && <SettingsPanel />}
+      {connectionManagerOpen && <ConnectionManagerModal />}
     </>
   )
 }

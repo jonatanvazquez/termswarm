@@ -1,9 +1,24 @@
 import { create } from 'zustand'
-import type { Project, Conversation, ConversationStatus, ConversationType, BrowserTab } from '../types'
+import type {
+  Project,
+  Conversation,
+  ConversationStatus,
+  ConversationType,
+  BrowserTab
+} from '../types'
 import { useUIStore } from './uiStore'
 import { useConversationStore } from './conversationStore'
 
-export const PROJECT_COLORS = ['#f97316', '#8b5cf6', '#06b6d4', '#10b981', '#ec4899', '#eab308', '#ef4444', '#6366f1']
+export const PROJECT_COLORS = [
+  '#f97316',
+  '#8b5cf6',
+  '#06b6d4',
+  '#10b981',
+  '#ec4899',
+  '#eab308',
+  '#ef4444',
+  '#6366f1'
+]
 
 function uid(): string {
   return crypto.randomUUID().slice(0, 8)
@@ -23,7 +38,7 @@ interface ProjectState {
   toggleSearch: () => void
   archiveProject: (projectId: string) => void
   unarchiveProject: (projectId: string) => void
-  addProject: (name: string, path: string, color?: string) => void
+  addProject: (name: string, path: string, color?: string, connectionId?: string) => void
   deleteProject: (projectId: string) => void
   renameProject: (projectId: string, name: string) => void
   addConversation: (projectId: string, name: string, type?: ConversationType) => void
@@ -31,11 +46,18 @@ interface ProjectState {
   archiveConversation: (conversationId: string) => void
   unarchiveConversation: (conversationId: string) => void
   deleteConversation: (conversationId: string) => void
-  duplicateConversation: (conversationId: string) => { newId: string; sourceClaudeSessionId?: string; newClaudeSessionId?: string } | null
+  duplicateConversation: (
+    conversationId: string
+  ) => { newId: string; sourceClaudeSessionId?: string; newClaudeSessionId?: string } | null
   markConversationRead: (conversationId: string) => void
   markConversationUnread: (conversationId: string) => void
   setConversationStatus: (conversationId: string, status: ConversationStatus) => void
-  setProjectPreview: (projectId: string, previewOpen: boolean, previewTabs: BrowserTab[], activePreviewTabId: string) => void
+  setProjectPreview: (
+    projectId: string,
+    previewOpen: boolean,
+    previewTabs: BrowserTab[],
+    activePreviewTabId: string
+  ) => void
   loadFromDisk: () => Promise<void>
 }
 
@@ -126,7 +148,7 @@ export const useProjectStore = create<ProjectState>((set) => ({
         const tabId =
           incoming.activePreviewTabId && tabs.some((t) => t.id === incoming.activePreviewTabId)
             ? incoming.activePreviewTabId
-            : tabs[0]?.id ?? ''
+            : (tabs[0]?.id ?? '')
         ui.setPreviewState(incoming.previewOpen ?? false, tabs, tabId)
       }
 
@@ -150,11 +172,11 @@ export const useProjectStore = create<ProjectState>((set) => ({
 
   toggleShowArchived: () => set((state) => ({ showArchived: !state.showArchived })),
 
-  addProject: (name, path, chosenColor?) =>
+  addProject: (name, path, chosenColor?, connectionId?) =>
     set((state) => {
       const id = `proj-${uid()}`
       const color = chosenColor || PROJECT_COLORS[state.projects.length % PROJECT_COLORS.length]
-      const newProject: Project = { id, name, path, color, conversations: [] }
+      const newProject: Project = { id, name, path, color, conversations: [], connectionId }
       return {
         projects: [...state.projects, newProject],
         activeProjectId: id,
@@ -174,9 +196,7 @@ export const useProjectStore = create<ProjectState>((set) => ({
 
   renameProject: (projectId, name) =>
     set((state) => ({
-      projects: state.projects.map((p) =>
-        p.id === projectId ? { ...p, name } : p
-      )
+      projects: state.projects.map((p) => (p.id === projectId ? { ...p, name } : p))
     })),
 
   addConversation: (projectId, name, type = 'claude') =>
@@ -196,9 +216,7 @@ export const useProjectStore = create<ProjectState>((set) => ({
       }
       return {
         projects: state.projects.map((p) =>
-          p.id === projectId
-            ? { ...p, conversations: [...p.conversations, newConv] }
-            : p
+          p.id === projectId ? { ...p, conversations: [...p.conversations, newConv] } : p
         )
       }
     }),
@@ -207,9 +225,7 @@ export const useProjectStore = create<ProjectState>((set) => ({
     set((state) => ({
       projects: state.projects.map((p) => ({
         ...p,
-        conversations: p.conversations.map((c) =>
-          c.id === conversationId ? { ...c, name } : c
-        )
+        conversations: p.conversations.map((c) => (c.id === conversationId ? { ...c, name } : c))
       }))
     })),
 
@@ -246,7 +262,11 @@ export const useProjectStore = create<ProjectState>((set) => ({
     })),
 
   duplicateConversation: (conversationId) => {
-    let result: { newId: string; sourceClaudeSessionId?: string; newClaudeSessionId?: string } | null = null
+    let result: {
+      newId: string
+      sourceClaudeSessionId?: string
+      newClaudeSessionId?: string
+    } | null = null
     set((state) => {
       let original: Conversation | undefined
       let projectId: string | undefined
@@ -278,9 +298,7 @@ export const useProjectStore = create<ProjectState>((set) => ({
 
       return {
         projects: state.projects.map((p) =>
-          p.id === projectId
-            ? { ...p, conversations: [...p.conversations, duplicate] }
-            : p
+          p.id === projectId ? { ...p, conversations: [...p.conversations, duplicate] } : p
         )
       }
     })
@@ -316,7 +334,12 @@ export const useProjectStore = create<ProjectState>((set) => ({
             ? {
                 ...c,
                 status,
-                waitingSince: status === 'waiting' ? (c.status !== 'waiting' ? new Date().toISOString() : c.waitingSince) : undefined
+                waitingSince:
+                  status === 'waiting'
+                    ? c.status !== 'waiting'
+                      ? new Date().toISOString()
+                      : c.waitingSince
+                    : undefined
               }
             : c
         )
@@ -362,10 +385,16 @@ export const useProjectStore = create<ProjectState>((set) => ({
     const seenIds = new Set<string>()
     let needsRegen = false
     for (const p of savedProjects) {
-      if (seenIds.has(p.id)) { needsRegen = true; break }
+      if (seenIds.has(p.id)) {
+        needsRegen = true
+        break
+      }
       seenIds.add(p.id)
       for (const c of p.conversations) {
-        if (seenIds.has(c.id)) { needsRegen = true; break }
+        if (seenIds.has(c.id)) {
+          needsRegen = true
+          break
+        }
         seenIds.add(c.id)
       }
       if (needsRegen) break
@@ -385,7 +414,8 @@ export const useProjectStore = create<ProjectState>((set) => ({
             projectId: projId,
             status: 'waiting' as ConversationStatus,
             waitingSince: c.waitingSince || new Date().toISOString(),
-            claudeSessionId: c.claudeSessionId || (c.type === 'terminal' ? undefined : crypto.randomUUID()),
+            claudeSessionId:
+              c.claudeSessionId || (c.type === 'terminal' ? undefined : crypto.randomUUID()),
             type: c.type || 'claude'
           }))
         }
@@ -398,7 +428,8 @@ export const useProjectStore = create<ProjectState>((set) => ({
           ...c,
           status: 'waiting' as ConversationStatus,
           waitingSince: c.waitingSince || new Date().toISOString(),
-          claudeSessionId: c.claudeSessionId || (c.type === 'terminal' ? undefined : crypto.randomUUID()),
+          claudeSessionId:
+            c.claudeSessionId || (c.type === 'terminal' ? undefined : crypto.randomUUID()),
           type: c.type || 'claude'
         }))
       }))
@@ -439,7 +470,7 @@ export const useProjectStore = create<ProjectState>((set) => ({
         activeProject.activePreviewTabId &&
         tabs.some((t) => t.id === activeProject.activePreviewTabId)
           ? activeProject.activePreviewTabId!
-          : tabs[0]?.id ?? ''
+          : (tabs[0]?.id ?? '')
       useUIStore.getState().setPreviewState(activeProject.previewOpen ?? false, tabs, tabId)
     }
   }

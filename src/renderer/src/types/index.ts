@@ -32,6 +32,7 @@ export interface Project {
   previewTabs?: BrowserTab[]
   activePreviewTabId?: string
   archived?: boolean
+  connectionId?: string
 }
 
 export interface Tab {

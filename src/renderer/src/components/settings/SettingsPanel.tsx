@@ -1,5 +1,6 @@
-import { Download, Loader2, Minus, Plus, RefreshCw, Search, X } from 'lucide-react'
+import { Download, Loader2, Minus, Plus, RefreshCw, Search, Server, X } from 'lucide-react'
 import { useSettingsStore } from '../../store/settingsStore'
+import { useConnectionStore } from '../../store/connectionStore'
 
 const ZOOM_MIN = 0.75
 const ZOOM_MAX = 1.25
@@ -13,6 +14,9 @@ export function SettingsPanel() {
   const checkForUpdates = useSettingsStore((s) => s.checkForUpdates)
   const downloadUpdate = useSettingsStore((s) => s.downloadUpdate)
   const installUpdate = useSettingsStore((s) => s.installUpdate)
+
+  const openConnectionManager = useConnectionStore((s) => s.openManager)
+  const connectionCount = useConnectionStore((s) => s.connections.length)
 
   const adjustZoom = (delta: number) => {
     const next = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, zoom + delta))
@@ -30,7 +34,10 @@ export function SettingsPanel() {
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={toggleSettings}>
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+      onClick={toggleSettings}
+    >
       <div
         className="w-[360px] rounded-xl border border-border-default bg-surface-2 p-5 shadow-2xl"
         onClick={(e) => e.stopPropagation()}
@@ -68,6 +75,31 @@ export function SettingsPanel() {
               <Plus size={14} />
             </button>
           </div>
+        </div>
+
+        {/* Separator */}
+        <div className="my-3 h-px bg-border-default" />
+
+        {/* SSH Connections */}
+        <div className="flex items-center justify-between rounded-lg bg-white/5 px-3 py-2.5">
+          <div className="flex items-center gap-2">
+            <Server size={14} className="text-accent" />
+            <div className="flex flex-col gap-0.5">
+              <span className="text-xs text-text-secondary">SSH Connections</span>
+              <span className="text-[10px] text-text-secondary/70">
+                {connectionCount} configured
+              </span>
+            </div>
+          </div>
+          <button
+            onClick={() => {
+              toggleSettings()
+              openConnectionManager()
+            }}
+            className="flex items-center gap-1 rounded bg-white/10 px-2 py-1 text-[10px] font-medium text-text-primary transition-colors hover:bg-white/15"
+          >
+            Manage
+          </button>
         </div>
 
         {/* Separator */}

@@ -17,6 +17,7 @@ export function GitPanel() {
   const projects = useProjectStore((s) => s.projects)
   const activeProject = projects.find((p) => p.id === activeProjectId)
   const projectPath = activeProject?.path ?? ''
+  const connectionId = activeProject?.connectionId
 
   const ps = useGitStore((s) => s.projects[projectPath])
   const stageFiles = useGitStore((s) => s.stageFiles)
@@ -65,7 +66,7 @@ export function GitPanel() {
         {activeTab === 'changes' && (
           <div className="flex flex-col gap-2 px-2 pb-2 pt-1">
             {/* Commit form */}
-            <GitCommitForm projectPath={projectPath} />
+            <GitCommitForm projectPath={projectPath} connectionId={connectionId} />
 
             {/* Staged Changes */}
             {status.staged.length > 0 && (
@@ -75,7 +76,7 @@ export function GitPanel() {
                     Staged Changes ({status.staged.length})
                   </span>
                   <button
-                    onClick={() => unstageAll(projectPath)}
+                    onClick={() => unstageAll(projectPath, connectionId)}
                     title="Unstage all"
                     className="flex h-4 w-4 items-center justify-center rounded text-text-secondary hover:bg-surface-3 hover:text-text-primary"
                   >
@@ -87,7 +88,7 @@ export function GitPanel() {
                     <GitChangedFileItem
                       key={`staged-${f.path}`}
                       file={f}
-                      onToggle={() => unstageFiles(projectPath, [f.path])}
+                      onToggle={() => unstageFiles(projectPath, [f.path], connectionId)}
                     />
                   ))}
                   {stagedExtra > 0 && (
@@ -107,7 +108,7 @@ export function GitPanel() {
                     Changes ({unstagedAll.length})
                   </span>
                   <button
-                    onClick={() => stageAll(projectPath)}
+                    onClick={() => stageAll(projectPath, connectionId)}
                     title="Stage all"
                     className="flex h-4 w-4 items-center justify-center rounded text-text-secondary hover:bg-surface-3 hover:text-text-primary"
                   >
@@ -119,7 +120,7 @@ export function GitPanel() {
                     <GitChangedFileItem
                       key={`unstaged-${f.path}`}
                       file={f}
-                      onToggle={() => stageFiles(projectPath, [f.path])}
+                      onToggle={() => stageFiles(projectPath, [f.path], connectionId)}
                     />
                   ))}
                   {unstagedExtra > 0 && (

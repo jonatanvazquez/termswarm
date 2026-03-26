@@ -11,7 +11,8 @@ import {
   Check,
   X,
   Terminal,
-  Sparkles
+  Sparkles,
+  Server
 } from 'lucide-react'
 import type { Project, ConversationType } from '../../types'
 import { useProjectStore } from '../../store/projectStore'
@@ -244,7 +245,9 @@ export function ProjectItem({ project, isArchived, forceExpanded }: ProjectItemP
           size={12}
           className={`shrink-0 text-text-secondary transition-transform ${isExpanded ? 'rotate-90' : ''}`}
         />
-        {isExpanded ? (
+        {project.connectionId ? (
+          <Server size={14} style={{ color: project.color }} className="shrink-0" />
+        ) : isExpanded ? (
           <FolderOpen size={14} style={{ color: project.color }} className="shrink-0" />
         ) : (
           <Folder size={14} style={{ color: project.color }} className="shrink-0" />
@@ -337,27 +340,26 @@ export function ProjectItem({ project, isArchived, forceExpanded }: ProjectItemP
           {visibleConversations.map((conv) => (
             <ConversationItem key={conv.id} conversation={conv} />
           ))}
-          {isArchived ? (
-            archivedConversations.length > 0 && (
-              <>
-                {archivedConversations.map((conv) => (
-                  <ConversationItem key={conv.id} conversation={conv} />
-                ))}
-              </>
-            )
-          ) : (
-            showArchived && archivedConversations.length > 0 && (
-              <div className="mt-1">
-                <div className="flex items-center gap-1 px-2 py-1 text-[10px] text-text-secondary">
-                  <Archive size={9} />
-                  <span>Archived ({archivedConversations.length})</span>
+          {isArchived
+            ? archivedConversations.length > 0 && (
+                <>
+                  {archivedConversations.map((conv) => (
+                    <ConversationItem key={conv.id} conversation={conv} />
+                  ))}
+                </>
+              )
+            : showArchived &&
+              archivedConversations.length > 0 && (
+                <div className="mt-1">
+                  <div className="flex items-center gap-1 px-2 py-1 text-[10px] text-text-secondary">
+                    <Archive size={9} />
+                    <span>Archived ({archivedConversations.length})</span>
+                  </div>
+                  {archivedConversations.map((conv) => (
+                    <ConversationItem key={conv.id} conversation={conv} />
+                  ))}
                 </div>
-                {archivedConversations.map((conv) => (
-                  <ConversationItem key={conv.id} conversation={conv} />
-                ))}
-              </div>
-            )
-          )}
+              )}
         </div>
       )}
     </div>

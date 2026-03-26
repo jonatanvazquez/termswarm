@@ -19,8 +19,8 @@ export function ProjectList() {
   const searchQuery = useProjectStore((s) => s.searchQuery)
   const showArchived = useProjectStore((s) => s.showArchived)
 
-  const handleSubmit = (name: string, path: string, color: string) => {
-    addProject(name, path, color)
+  const handleSubmit = (name: string, path: string, color: string, connectionId?: string) => {
+    addProject(name, path, color, connectionId)
     stopAdding()
 
     // Auto-create first conversation and open it
@@ -46,7 +46,7 @@ export function ProjectList() {
 
   const { visibleActive, visibleArchived, forceExpandedIds } = useMemo(() => {
     if (isSearching) {
-      const matchesProject = (p: typeof projects[0]) =>
+      const matchesProject = (p: (typeof projects)[0]) =>
         p.name.toLowerCase().includes(query) ||
         p.conversations.some((c) => c.name.toLowerCase().includes(query))
 
@@ -85,7 +85,15 @@ export function ProjectList() {
       visibleArchived: showArchived ? archivedProjects : [],
       forceExpandedIds: new Set<string>()
     }
-  }, [projects, activeProjects, archivedProjects, isSearching, query, conversationFilter, showArchived])
+  }, [
+    projects,
+    activeProjects,
+    archivedProjects,
+    isSearching,
+    query,
+    conversationFilter,
+    showArchived
+  ])
 
   if (projects.length === 0 && !adding) {
     return (
@@ -128,9 +136,7 @@ export function ProjectList() {
         />
       ))}
       {!isSearching && emptyMessage && visibleActive.length === 0 && activeProjects.length > 0 && (
-        <div className="px-4 py-6 text-center text-[11px] text-text-secondary">
-          {emptyMessage}
-        </div>
+        <div className="px-4 py-6 text-center text-[11px] text-text-secondary">{emptyMessage}</div>
       )}
       {noResults && (
         <div className="px-4 py-6 text-center text-[11px] text-text-secondary">
@@ -153,9 +159,7 @@ export function ProjectList() {
           ))}
         </>
       )}
-      {adding && (
-        <NewProjectForm onSubmit={handleSubmit} onCancel={stopAdding} />
-      )}
+      {adding && <NewProjectForm onSubmit={handleSubmit} onCancel={stopAdding} />}
     </div>
   )
 }

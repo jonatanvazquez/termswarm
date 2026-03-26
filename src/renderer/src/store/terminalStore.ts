@@ -83,6 +83,15 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     const fitAddon = new FitAddon()
     terminal.loadAddon(fitAddon)
 
+    // Cmd+K / Ctrl+K to clear terminal
+    terminal.attachCustomKeyEventHandler((e) => {
+      if (e.type === 'keydown' && e.key === 'k' && (e.metaKey || e.ctrlKey)) {
+        terminal.clear()
+        return false // Prevent xterm from processing it
+      }
+      return true
+    })
+
     // Write pending content BEFORE adding to instances map.
     // xterm.js buffers writes before open(), so this content renders first.
     // By writing before the instance is discoverable, PTY data can't arrive

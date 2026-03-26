@@ -30,6 +30,7 @@
     "electron-updater": "^6.7.3",
     "lucide-react": "^0.564.0",
     "node-pty": "^1.1.0",
+    "ssh2": "^1.17.0",
     "tailwindcss": "^4.1.18",
     "zustand": "^5.0.11"
   },
@@ -41,6 +42,7 @@
     "@types/node": "^22.19.1",
     "@types/react": "^19.2.7",
     "@types/react-dom": "^19.2.3",
+    "@types/ssh2": "^1.15.5",
     "@vitejs/plugin-react": "^5.1.1",
     "electron": "^39.2.6",
     "electron-builder": "^26.0.12",

@@ -1,9 +1,10 @@
 import { useRef, useEffect } from 'react'
-import { Plus, Settings, Search, X, Archive } from 'lucide-react'
+import { Plus, Settings, Search, X, Archive, Server } from 'lucide-react'
 import { IconButton } from '../common/IconButton'
 import { useUIStore } from '../../store/uiStore'
 import { useProjectStore } from '../../store/projectStore'
 import { useSettingsStore } from '../../store/settingsStore'
+import { useConnectionStore } from '../../store/connectionStore'
 
 export function SidebarActions() {
   const startAddingProject = useUIStore((s) => s.startAddingProject)
@@ -16,6 +17,7 @@ export function SidebarActions() {
   const showArchived = useProjectStore((s) => s.showArchived)
   const toggleShowArchived = useProjectStore((s) => s.toggleShowArchived)
   const toggleSettings = useSettingsStore((s) => s.toggleSettings)
+  const openConnectionManager = useConnectionStore((s) => s.openManager)
 
   const inputRef = useRef<HTMLInputElement>(null)
 
@@ -37,16 +39,23 @@ export function SidebarActions() {
           <IconButton
             tooltip={showArchived ? 'Hide archived' : 'Show archived'}
             onClick={toggleShowArchived}
-            className={showArchived ? 'bg-accent/15 text-accent hover:bg-accent/25 hover:text-accent' : ''}
+            className={
+              showArchived ? 'bg-accent/15 text-accent hover:bg-accent/25 hover:text-accent' : ''
+            }
           >
             <Archive size={14} />
           </IconButton>
           <IconButton
             tooltip={searchOpen ? 'Close search' : 'Search'}
             onClick={toggleSearch}
-            className={searchOpen ? 'bg-accent/15 text-accent hover:bg-accent/25 hover:text-accent' : ''}
+            className={
+              searchOpen ? 'bg-accent/15 text-accent hover:bg-accent/25 hover:text-accent' : ''
+            }
           >
             <Search size={14} />
+          </IconButton>
+          <IconButton tooltip="SSH Connections" onClick={openConnectionManager}>
+            <Server size={14} />
           </IconButton>
           <IconButton tooltip="New project" onClick={startAddingProject}>
             <Plus size={14} />
@@ -89,7 +98,13 @@ export function SidebarActions() {
                   : 'text-text-secondary hover:text-text-primary'
               }`}
             >
-              {f === 'all' ? 'All' : f === 'unanswered' ? 'Pending' : f === 'working' ? 'Working' : 'Unread'}
+              {f === 'all'
+                ? 'All'
+                : f === 'unanswered'
+                  ? 'Pending'
+                  : f === 'working'
+                    ? 'Working'
+                    : 'Unread'}
             </button>
           ))}
         </div>

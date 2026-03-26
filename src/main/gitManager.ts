@@ -1,5 +1,6 @@
 import { execFile } from 'child_process'
 import type { GitStatusResult, GitLogResult, GitPullResult } from '../shared/gitTypes'
+import { sshManager } from './sshManager'
 
 const EXEC_OPTIONS = {
   timeout: 10_000,
@@ -14,6 +15,23 @@ function git(cwd: string, args: string[]): Promise<string> {
       else resolve(stdout)
     })
   })
+}
+
+function shellEscape(s: string): string {
+  return `'${s.replace(/'/g, "'\\''")}'`
+}
+
+async function gitRemote(connectionId: string, cwd: string, args: string[]): Promise<string> {
+  const escapedArgs = args.map((a) => shellEscape(a)).join(' ')
+  const cmd = `cd ${shellEscape(cwd)} && git ${escapedArgs}`
+  const result = await sshManager.exec(connectionId, cmd)
+  if (result.code !== 0) throw new Error(result.stderr || `git exited with code ${result.code}`)
+  return result.stdout
+}
+
+function gitExec(cwd: string, args: string[], connectionId?: string): Promise<string> {
+  if (connectionId) return gitRemote(connectionId, cwd, args)
+  return git(cwd, args)
 }
 
 function parseStatusLine(line: string): { code: string; path: string; origPath?: string } | null {
@@ -34,16 +52,16 @@ function parseStatusLine(line: string): { code: string; path: string; origPath?:
 }
 
 class GitManager {
-  async isGitRepo(cwd: string): Promise<boolean> {
+  async isGitRepo(cwd: string, connectionId?: string): Promise<boolean> {
     try {
-      const out = await git(cwd, ['rev-parse', '--is-inside-work-tree'])
+      const out = await gitExec(cwd, ['rev-parse', '--is-inside-work-tree'], connectionId)
       return out.trim() === 'true'
     } catch {
       return false
     }
   }
 
-  async getStatus(cwd: string): Promise<GitStatusResult> {
+  async getStatus(cwd: string, connectionId?: string): Promise<GitStatusResult> {
     const result: GitStatusResult = {
       isGitRepo: false,
       branch: '',
@@ -55,17 +73,17 @@ class GitManager {
     }
 
     try {
-      const isRepo = await this.isGitRepo(cwd)
+      const isRepo = await this.isGitRepo(cwd, connectionId)
       if (!isRepo) return result
       result.isGitRepo = true
 
       // Get branch name
       try {
-        const branchOut = await git(cwd, ['branch', '--show-current'])
+        const branchOut = await gitExec(cwd, ['branch', '--show-current'], connectionId)
         result.branch = branchOut.trim()
         if (!result.branch) {
           // Detached HEAD
-          const headOut = await git(cwd, ['rev-parse', '--short', 'HEAD'])
+          const headOut = await gitExec(cwd, ['rev-parse', '--short', 'HEAD'], connectionId)
           result.branch = `HEAD detached at ${headOut.trim()}`
         }
       } catch {
@@ -74,7 +92,11 @@ class GitManager {
 
       // Get ahead/behind
       try {
-        const countOut = await git(cwd, ['rev-list', '--left-right', '--count', '@{upstream}...HEAD'])
+        const countOut = await gitExec(
+          cwd,
+          ['rev-list', '--left-right', '--count', '@{upstream}...HEAD'],
+          connectionId
+        )
         const parts = countOut.trim().split(/\s+/)
         if (parts.length === 2) {
           result.behind = parseInt(parts[0], 10) || 0
@@ -85,7 +107,7 @@ class GitManager {
       }
 
       // Get file statuses
-      const statusOut = await git(cwd, ['status', '--porcelain=v1'])
+      const statusOut = await gitExec(cwd, ['status', '--porcelain=v1'], connectionId)
       for (const line of statusOut.split('\n')) {
         if (!line) continue
         const parsed = parseStatusLine(line)
@@ -129,8 +151,8 @@ class GitManager {
       // Collect line-level stats (insertions/deletions) per file
       try {
         const [unstagedNumstat, stagedNumstat] = await Promise.all([
-          git(cwd, ['diff', '--numstat']).catch(() => ''),
-          git(cwd, ['diff', '--numstat', '--cached']).catch(() => '')
+          gitExec(cwd, ['diff', '--numstat'], connectionId).catch(() => ''),
+          gitExec(cwd, ['diff', '--numstat', '--cached'], connectionId).catch(() => '')
         ])
 
         const parseNumstat = (raw: string): Map<string, { ins: number; del: number }> => {
@@ -176,14 +198,13 @@ class GitManager {
     }
   }
 
-  async getLog(cwd: string, count = 20): Promise<GitLogResult> {
+  async getLog(cwd: string, count = 20, connectionId?: string): Promise<GitLogResult> {
     try {
-      const out = await git(cwd, [
-        'log',
-        `--pretty=format:%h%x00%s%x00%an%x00%ar`,
-        `-n`,
-        String(count)
-      ])
+      const out = await gitExec(
+        cwd,
+        ['log', `--pretty=format:%h%x00%s%x00%an%x00%ar`, `-n`, String(count)],
+        connectionId
+      )
       const commits = out
         .trim()
         .split('\n')
@@ -198,31 +219,31 @@ class GitManager {
     }
   }
 
-  async stageFiles(cwd: string, paths: string[]): Promise<void> {
+  async stageFiles(cwd: string, paths: string[], connectionId?: string): Promise<void> {
     if (paths.length === 0) return
-    await git(cwd, ['add', '--', ...paths])
+    await gitExec(cwd, ['add', '--', ...paths], connectionId)
   }
 
-  async unstageFiles(cwd: string, paths: string[]): Promise<void> {
+  async unstageFiles(cwd: string, paths: string[], connectionId?: string): Promise<void> {
     if (paths.length === 0) return
-    await git(cwd, ['restore', '--staged', '--', ...paths])
+    await gitExec(cwd, ['restore', '--staged', '--', ...paths], connectionId)
   }
 
-  async stageAll(cwd: string): Promise<void> {
-    await git(cwd, ['add', '-A'])
+  async stageAll(cwd: string, connectionId?: string): Promise<void> {
+    await gitExec(cwd, ['add', '-A'], connectionId)
   }
 
-  async unstageAll(cwd: string): Promise<void> {
-    await git(cwd, ['reset', 'HEAD'])
+  async unstageAll(cwd: string, connectionId?: string): Promise<void> {
+    await gitExec(cwd, ['reset', 'HEAD'], connectionId)
   }
 
-  async commit(cwd: string, message: string): Promise<void> {
-    await git(cwd, ['commit', '-m', message])
+  async commit(cwd: string, message: string, connectionId?: string): Promise<void> {
+    await gitExec(cwd, ['commit', '-m', message], connectionId)
   }
 
-  async pull(cwd: string): Promise<GitPullResult> {
+  async pull(cwd: string, connectionId?: string): Promise<GitPullResult> {
     try {
-      const out = await git(cwd, ['pull'])
+      const out = await gitExec(cwd, ['pull'], connectionId)
       return { success: true, message: out.trim() || 'Already up to date.' }
     } catch (err) {
       return { success: false, message: (err as Error).message || 'Pull failed' }
