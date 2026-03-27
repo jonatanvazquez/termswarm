@@ -84,10 +84,21 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     terminal.loadAddon(fitAddon)
 
     // Cmd+K / Ctrl+K to clear terminal
+    // Cmd+Shift+R / Ctrl+Shift+R to force re-fit + resize (fixes tmux sizing)
     terminal.attachCustomKeyEventHandler((e) => {
       if (e.type === 'keydown' && e.key === 'k' && (e.metaKey || e.ctrlKey)) {
         terminal.clear()
-        return false // Prevent xterm from processing it
+        return false
+      }
+      if (e.type === 'keydown' && e.key === 'R' && e.shiftKey && (e.metaKey || e.ctrlKey)) {
+        try {
+          fitAddon.fit()
+          const { cols, rows } = terminal
+          window.api.ptyResize(conversationId, cols, rows)
+        } catch {
+          // Element may not be visible
+        }
+        return false
       }
       return true
     })

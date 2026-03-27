@@ -30,6 +30,7 @@ class SSHManager {
   private connections = new Map<string, ManagedConnection>()
   private mainWindow: BrowserWindow | null = null
   private reconnectCallback: ((connectionId: string) => void) | null = null
+  private tmuxCheckPromises = new Map<string, Promise<boolean>>()
 
   setMainWindow(win: BrowserWindow): void {
     this.mainWindow = win
@@ -178,17 +179,31 @@ class SSHManager {
     return `ts-${sessionId.replace(/[.:]/g, '-')}`
   }
 
-  /** Check whether tmux is installed on the remote host */
+  /** Check whether tmux is installed on the remote host (deduplicated per connection) */
   async checkTmux(connectionId: string): Promise<boolean> {
     const managed = this.connections.get(connectionId)
     if (!managed) return false
-    try {
-      const { code } = await this.exec(connectionId, 'command -v tmux')
-      managed.tmuxAvailable = code === 0
-    } catch {
-      managed.tmuxAvailable = false
-    }
-    return managed.tmuxAvailable
+    if (managed.tmuxAvailable !== null) return managed.tmuxAvailable
+
+    // Deduplicate: if a check is already in-flight, reuse its promise
+    const existing = this.tmuxCheckPromises.get(connectionId)
+    if (existing) return existing
+
+    const promise = this.exec(connectionId, 'command -v tmux')
+      .then(({ code }) => {
+        managed.tmuxAvailable = code === 0
+        return managed.tmuxAvailable
+      })
+      .catch(() => {
+        managed.tmuxAvailable = false
+        return false
+      })
+      .finally(() => {
+        this.tmuxCheckPromises.delete(connectionId)
+      })
+
+    this.tmuxCheckPromises.set(connectionId, promise)
+    return promise
   }
 
   isTmuxAvailable(connectionId: string): boolean {
@@ -241,11 +256,13 @@ class SSHManager {
           const tmuxName = this.tmuxSessionName(sessionId)
           // Use -c for working directory. For commands (claude mode), pass as tmux argument.
           // For terminal mode (no command), omit so tmux starts an interactive shell.
+          // aggressive-resize: resize tmux window to match current client, not smallest.
+          const setResize = `tmux set-option -t ${shellEscape(tmuxName)} -g aggressive-resize on 2>/dev/null;`
           const newCmd = command
             ? `tmux new-session -s ${shellEscape(tmuxName)} -c ${shellEscape(cwd)} ${shellEscape(command)}`
             : `tmux new-session -s ${shellEscape(tmuxName)} -c ${shellEscape(cwd)}`
           stream.write(
-            `${fixPath} && (tmux has-session -t ${shellEscape(tmuxName)} 2>/dev/null && tmux attach -t ${shellEscape(tmuxName)} || ${newCmd})\n`
+            `${fixPath} && (tmux has-session -t ${shellEscape(tmuxName)} 2>/dev/null && { ${setResize} tmux attach -t ${shellEscape(tmuxName)}; } || ${newCmd})\n`
           )
         } else {
           // Fallback: no tmux, run directly as before
@@ -297,7 +314,7 @@ class SSHManager {
         const fixPath =
           'export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$HOME/.local/bin:$PATH'
         const tmuxName = this.tmuxSessionName(sessionId)
-        stream.write(`${fixPath} && tmux attach -t ${shellEscape(tmuxName)}\n`)
+        stream.write(`${fixPath} && tmux set-option -t ${shellEscape(tmuxName)} -g aggressive-resize on 2>/dev/null; tmux attach -t ${shellEscape(tmuxName)}\n`)
 
         resolve(stream)
       })

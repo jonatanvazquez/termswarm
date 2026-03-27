@@ -15,6 +15,8 @@ interface PtySession {
   sshStream: ClientChannel | null
   connectionId?: string
   cwd?: string
+  pendingCols: number
+  pendingRows: number
   lastDataTime: number
   lastOutput: string
   promptDetected: boolean
@@ -147,6 +149,8 @@ class PtyManager {
     const session: PtySession = {
       process: ptyProcess,
       sshStream: null,
+      pendingCols: 80,
+      pendingRows: 24,
       lastDataTime: Date.now(),
       lastOutput: '',
       promptDetected: false,
@@ -197,6 +201,8 @@ class PtyManager {
       sshStream: null,
       connectionId,
       cwd,
+      pendingCols: 80,
+      pendingRows: 24,
       lastDataTime: Date.now(),
       lastOutput: '',
       promptDetected: false,
@@ -211,14 +217,26 @@ class PtyManager {
     this.startStatusChecker()
     this.startMemoryChecker()
 
+    const modeLabel = mode === 'claude' ? 'Claude Code' : 'terminal'
+    this.send(
+      'pty:data',
+      sessionId,
+      `\x1b[90m[SSH] Opening ${modeLabel} session on remote...\x1b[0m\r\n`
+    )
+
     sshManager
       .openShell(connectionId, cwd, 80, 24, sessionId, command)
       .then((stream) => {
+        this.send(
+          'pty:data',
+          sessionId,
+          `\x1b[90m[SSH] Connected — attaching to tmux session.\x1b[0m\r\n`
+        )
         this.attachSSHStream(sessionId, session, connectionId, stream)
       })
       .catch((err) => {
         session.status = 'error'
-        this.send('pty:data', sessionId, `\r\n[SSH Error] ${err.message}\r\n`)
+        this.send('pty:data', sessionId, `\r\n\x1b[31m[SSH Error] ${err.message}\x1b[0m\r\n`)
         this.send('pty:exit', sessionId, 1)
         this.sessions.delete(sessionId)
       })
@@ -233,6 +251,19 @@ class PtyManager {
   ): void {
     session.sshStream = stream
 
+    // Apply any resize that arrived before the stream was ready.
+    // Also re-send after a short delay so tmux picks it up once fully attached.
+    const applyResize = (): void => {
+      try {
+        const { pendingCols: c, pendingRows: r } = session
+        stream.setWindow(r, c, r * 16, c * 8)
+      } catch {
+        // Stream may have closed
+      }
+    }
+    applyResize()
+    setTimeout(applyResize, 500)
+
     stream.on('data', (data: Buffer) => {
       this.handleData(sessionId, session, data.toString())
     })
@@ -244,6 +275,11 @@ class PtyManager {
         session.sshStream = null
         session.status = 'idle'
         this.sendStatus(sessionId, 'idle')
+        this.send(
+          'pty:data',
+          sessionId,
+          '\r\n\x1b[33m[SSH] Disconnected — remote session still running in tmux.\x1b[0m\r\n'
+        )
       } else {
         session.status = 'idle'
         session.awaitingResponse = false
@@ -362,6 +398,9 @@ class PtyManager {
   resize(sessionId: string, cols: number, rows: number): void {
     const session = this.sessions.get(sessionId)
     if (session) {
+      // Always store latest size so we can apply it when sshStream connects
+      session.pendingCols = cols
+      session.pendingRows = rows
       try {
         if (session.sshStream) {
           session.sshStream.setWindow(rows, cols, rows * 16, cols * 8)
