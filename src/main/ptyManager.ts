@@ -236,9 +236,12 @@ class PtyManager {
       })
       .catch((err) => {
         session.status = 'error'
-        this.send('pty:data', sessionId, `\r\n\x1b[31m[SSH Error] ${err.message}\x1b[0m\r\n`)
-        this.send('pty:exit', sessionId, 1)
-        this.sessions.delete(sessionId)
+        this.send(
+          'pty:data',
+          sessionId,
+          `\r\n\x1b[31m[SSH Error] ${err.message}\x1b[0m\r\n\x1b[90mPress Cmd+Shift+T to retry.\x1b[0m\r\n`
+        )
+        this.sendStatus(sessionId, 'error')
       })
   }
 
@@ -411,6 +414,48 @@ class PtyManager {
         // Process may have already exited
       }
     }
+  }
+
+  /** Retry a failed SSH session (re-opens the shell/tmux without destroying the session) */
+  retry(sessionId: string): void {
+    const session = this.sessions.get(sessionId)
+    if (!session || !session.connectionId) return
+
+    const connectionId = session.connectionId
+    const cwd = session.cwd || '~'
+
+    let command: string | undefined
+    if (session.mode === 'claude') {
+      command = 'claude --dangerously-skip-permissions'
+    }
+
+    session.status = 'running'
+    this.sendStatus(sessionId, 'running')
+    this.send(
+      'pty:data',
+      sessionId,
+      `\x1b[90m[SSH] Retrying connection...\x1b[0m\r\n`
+    )
+
+    sshManager
+      .openShell(connectionId, cwd, 80, 24, sessionId, command)
+      .then((stream) => {
+        this.send(
+          'pty:data',
+          sessionId,
+          `\x1b[90m[SSH] Connected — attaching to tmux session.\x1b[0m\r\n`
+        )
+        this.attachSSHStream(sessionId, session, connectionId, stream)
+      })
+      .catch((err) => {
+        session.status = 'error'
+        this.send(
+          'pty:data',
+          sessionId,
+          `\r\n\x1b[31m[SSH Error] ${err.message}\x1b[0m\r\n\x1b[90mPress Cmd+Shift+T to retry.\x1b[0m\r\n`
+        )
+        this.sendStatus(sessionId, 'error')
+      })
   }
 
   kill(sessionId: string): void {

@@ -183,6 +183,10 @@ app.whenReady().then(() => {
     ptyManager.killRemote(sessionId)
   })
 
+  ipcMain.handle('pty:retry', (_e, sessionId: string) => {
+    ptyManager.retry(sessionId)
+  })
+
   ipcMain.handle('pty:pause', (_e, sessionId: string) => {
     ptyManager.pause(sessionId)
   })

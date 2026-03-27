@@ -31,6 +31,8 @@ class SSHManager {
   private mainWindow: BrowserWindow | null = null
   private reconnectCallback: ((connectionId: string) => void) | null = null
   private tmuxCheckPromises = new Map<string, Promise<boolean>>()
+  /** Per-connection queue to serialize shell/channel opening and avoid SSH channel saturation */
+  private shellQueues = new Map<string, Promise<unknown>>()
 
   setMainWindow(win: BrowserWindow): void {
     this.mainWindow = win
@@ -210,7 +212,37 @@ class SSHManager {
     return this.connections.get(connectionId)?.tmuxAvailable === true
   }
 
+  /** Serialize shell/channel opening per connection to avoid SSH channel saturation */
+  private enqueueShell<T>(connectionId: string, fn: () => Promise<T>): Promise<T> {
+    const prev = this.shellQueues.get(connectionId) ?? Promise.resolve()
+    const next = prev
+      .catch(() => {}) // Don't let previous failures block the queue
+      .then(() => new Promise<void>((r) => setTimeout(r, 100))) // Small gap between opens
+      .then(() => fn())
+    this.shellQueues.set(connectionId, next)
+    next.finally(() => {
+      // Clean up if this is the last in the queue
+      if (this.shellQueues.get(connectionId) === next) {
+        this.shellQueues.delete(connectionId)
+      }
+    })
+    return next
+  }
+
   async openShell(
+    connectionId: string,
+    cwd: string,
+    cols: number,
+    rows: number,
+    sessionId: string,
+    command?: string
+  ): Promise<ClientChannel> {
+    return this.enqueueShell(connectionId, () =>
+      this.openShellDirect(connectionId, cwd, cols, rows, sessionId, command)
+    )
+  }
+
+  private async openShellDirect(
     connectionId: string,
     cwd: string,
     cols: number,
@@ -254,9 +286,6 @@ class SSHManager {
 
         if (managed.tmuxAvailable) {
           const tmuxName = this.tmuxSessionName(sessionId)
-          // Use -c for working directory. For commands (claude mode), pass as tmux argument.
-          // For terminal mode (no command), omit so tmux starts an interactive shell.
-          // aggressive-resize: resize tmux window to match current client, not smallest.
           const setResize = `tmux set-option -t ${shellEscape(tmuxName)} -g aggressive-resize on 2>/dev/null;`
           const newCmd = command
             ? `tmux new-session -s ${shellEscape(tmuxName)} -c ${shellEscape(cwd)} ${shellEscape(command)}`
@@ -265,7 +294,6 @@ class SSHManager {
             `${fixPath} && (tmux has-session -t ${shellEscape(tmuxName)} 2>/dev/null && { ${setResize} tmux attach -t ${shellEscape(tmuxName)}; } || ${newCmd})\n`
           )
         } else {
-          // Fallback: no tmux, run directly as before
           if (command) {
             stream.write(`${fixPath} && cd ${shellEscape(cwd)} && ${command}\n`)
           } else {
@@ -280,6 +308,17 @@ class SSHManager {
 
   /** Reattach to an existing tmux session after SSH reconnection */
   async reattachTmux(
+    connectionId: string,
+    cols: number,
+    rows: number,
+    sessionId: string
+  ): Promise<ClientChannel> {
+    return this.enqueueShell(connectionId, () =>
+      this.reattachTmuxDirect(connectionId, cols, rows, sessionId)
+    )
+  }
+
+  private async reattachTmuxDirect(
     connectionId: string,
     cols: number,
     rows: number,

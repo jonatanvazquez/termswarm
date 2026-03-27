@@ -85,6 +85,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
 
     // Cmd+K / Ctrl+K to clear terminal
     // Cmd+Shift+R / Ctrl+Shift+R to force re-fit + resize (fixes tmux sizing)
+    // Cmd+Shift+T / Ctrl+Shift+T to retry failed SSH connection
     terminal.attachCustomKeyEventHandler((e) => {
       if (e.type === 'keydown' && e.key === 'k' && (e.metaKey || e.ctrlKey)) {
         terminal.clear()
@@ -98,6 +99,10 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         } catch {
           // Element may not be visible
         }
+        return false
+      }
+      if (e.type === 'keydown' && e.key === 'T' && e.shiftKey && (e.metaKey || e.ctrlKey)) {
+        window.api.ptyRetry(conversationId).catch(() => {})
         return false
       }
       return true

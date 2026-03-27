@@ -38,6 +38,7 @@ const api = {
   ptyKill: (sessionId: string): Promise<void> => ipcRenderer.invoke('pty:kill', sessionId),
   ptyKillRemote: (sessionId: string): Promise<void> =>
     ipcRenderer.invoke('pty:killRemote', sessionId),
+  ptyRetry: (sessionId: string): Promise<void> => ipcRenderer.invoke('pty:retry', sessionId),
   ptyPause: (sessionId: string): Promise<void> => ipcRenderer.invoke('pty:pause', sessionId),
   ptyResume: (sessionId: string): Promise<void> => ipcRenderer.invoke('pty:resume', sessionId),
 
