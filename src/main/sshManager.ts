@@ -212,6 +212,11 @@ class SSHManager {
     return this.connections.get(connectionId)?.tmuxAvailable === true
   }
 
+  /** Clear the shell queue for a connection (used by retry to unstick blocked queues) */
+  clearShellQueue(connectionId: string): void {
+    this.shellQueues.delete(connectionId)
+  }
+
   /** Serialize shell/channel opening per connection to avoid SSH channel saturation */
   private enqueueShell<T>(connectionId: string, fn: () => Promise<T>): Promise<T> {
     const prev = this.shellQueues.get(connectionId) ?? Promise.resolve()
@@ -263,6 +268,11 @@ class SSHManager {
     }
 
     return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        managed.activeSessions.delete(sessionId)
+        reject(new Error('Shell open timed out (15s)'))
+      }, 15000)
+
       const shellOpts = {
         term: 'xterm-256color',
         cols,
@@ -271,6 +281,7 @@ class SSHManager {
       }
 
       managed.client.shell(shellOpts, (err, stream) => {
+        clearTimeout(timeout)
         if (err) {
           managed.activeSessions.delete(sessionId)
           reject(err)
@@ -332,6 +343,11 @@ class SSHManager {
     managed.activeSessions.add(sessionId)
 
     return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        managed.activeSessions.delete(sessionId)
+        reject(new Error('Shell open timed out (15s)'))
+      }, 15000)
+
       const shellOpts = {
         term: 'xterm-256color',
         cols,
@@ -340,6 +356,7 @@ class SSHManager {
       }
 
       managed.client.shell(shellOpts, (err, stream) => {
+        clearTimeout(timeout)
         if (err) {
           managed.activeSessions.delete(sessionId)
           reject(err)

@@ -236,10 +236,13 @@ class PtyManager {
       })
       .catch((err) => {
         session.status = 'error'
+        const hint = err.message.includes('Channel open failure')
+          ? `\x1b[90mSSH channel limit reached — increase MaxSessions in /etc/ssh/sshd_config on the server.\x1b[0m\r\n`
+          : ''
         this.send(
           'pty:data',
           sessionId,
-          `\r\n\x1b[31m[SSH Error] ${err.message}\x1b[0m\r\n\x1b[90mPress Cmd+Shift+T to retry.\x1b[0m\r\n`
+          `\r\n\x1b[31m[SSH Error] ${err.message}\x1b[0m\r\n${hint}\x1b[90mPress Cmd+Shift+T to retry.\x1b[0m\r\n`
         )
         this.sendStatus(sessionId, 'error')
       })
@@ -416,13 +419,26 @@ class PtyManager {
     }
   }
 
-  /** Retry a failed SSH session (re-opens the shell/tmux without destroying the session) */
+  /** Respawn a stuck/failed SSH session — clears the queue and reconnects from scratch */
   retry(sessionId: string): void {
     const session = this.sessions.get(sessionId)
     if (!session || !session.connectionId) return
 
     const connectionId = session.connectionId
     const cwd = session.cwd || '~'
+
+    // Close any lingering stream
+    if (session.sshStream) {
+      try {
+        session.sshStream.close()
+      } catch {
+        // Already closed
+      }
+      session.sshStream = null
+    }
+    sshManager.removeSession(connectionId, sessionId)
+    // Clear any stuck queue so this attempt isn't blocked behind hung requests
+    sshManager.clearShellQueue(connectionId)
 
     let command: string | undefined
     if (session.mode === 'claude') {
@@ -434,9 +450,10 @@ class PtyManager {
     this.send(
       'pty:data',
       sessionId,
-      `\x1b[90m[SSH] Retrying connection...\x1b[0m\r\n`
+      `\x1b[90m[SSH] Respawning session...\x1b[0m\r\n`
     )
 
+    // Bypass the queue — go directly to openShell
     sshManager
       .openShell(connectionId, cwd, 80, 24, sessionId, command)
       .then((stream) => {
@@ -449,10 +466,15 @@ class PtyManager {
       })
       .catch((err) => {
         session.status = 'error'
+        const hint = err.message.includes('Channel open failure')
+          ? `\x1b[90mSSH channel limit reached — increase MaxSessions in /etc/ssh/sshd_config on the server.\x1b[0m\r\n`
+          : err.message.includes('timed out')
+            ? `\x1b[90mSSH connection may be stale — try disconnecting and reconnecting in Connection Manager.\x1b[0m\r\n`
+            : ''
         this.send(
           'pty:data',
           sessionId,
-          `\r\n\x1b[31m[SSH Error] ${err.message}\x1b[0m\r\n\x1b[90mPress Cmd+Shift+T to retry.\x1b[0m\r\n`
+          `\r\n\x1b[31m[SSH Error] ${err.message}\x1b[0m\r\n${hint}\x1b[90mPress Cmd+Shift+T to retry.\x1b[0m\r\n`
         )
         this.sendStatus(sessionId, 'error')
       })
