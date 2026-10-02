@@ -66,7 +66,7 @@ jobs:
 
   # ─── Windows (x64) ────────────────────────────────────────────────
   build-windows:
-    runs-on: windows-latest
+    runs-on: windows-2022  # windows-latest ships VS 2026, which node-gyp can't find
     steps:
       - uses: actions/checkout@v4
 
