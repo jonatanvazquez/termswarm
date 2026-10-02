@@ -1,17 +1,32 @@
 import { useState, useEffect, useRef } from 'react'
-import { MessageSquare, Copy, Archive, Trash2, ArchiveRestore, Check, X } from 'lucide-react'
+import {
+  MessageSquare,
+  Copy,
+  Archive,
+  Trash2,
+  ArchiveRestore,
+  Check,
+  X,
+  Square,
+  RotateCw
+} from 'lucide-react'
 import type { Conversation } from '../../types'
 import { StatusIndicator } from '../common/StatusIndicator'
-import { useConversationStore, checkPendingRename, clearPendingRename, setPendingRenameForNewTab } from '../../store/conversationStore'
+import {
+  useConversationStore,
+  checkPendingRename,
+  clearPendingRename,
+  setPendingRenameForNewTab,
+  syncClaudeName
+} from '../../store/conversationStore'
 import { useProjectStore } from '../../store/projectStore'
 import { useTerminalStore } from '../../store/terminalStore'
+import { useElapsed } from '../../hooks/useElapsed'
+import { formatMemory, formatElapsed, formatDateTime } from '../../utils/format'
 
-function formatMemory(bytes: number): string {
-  if (bytes >= 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)}G`
-  if (bytes >= 1024 * 1024) return `${Math.round(bytes / (1024 * 1024))}M`
-  if (bytes >= 1024) return `${Math.round(bytes / 1024)}K`
-  return `${bytes}B`
-}
+// Past this, a reply no longer lands while the conversation is still fresh — the wait
+// label goes from highlighted to muted.
+const FRESH_WAIT_MS = 5 * 60 * 1000
 
 type ConfirmAction = null | 'delete' | 'archive'
 
@@ -22,7 +37,13 @@ interface ConversationItemProps {
 export function ConversationItem({ conversation }: ConversationItemProps) {
   const openTab = useConversationStore((s) => s.openTab)
   const closeTab = useConversationStore((s) => s.closeTab)
+  const stopSession = useConversationStore((s) => s.stopSession)
+  const restartSession = useConversationStore((s) => s.restartSession)
   const activeTabId = useConversationStore((s) => s.activeTabId)
+  // An open tab means a terminal (and, unless it exited, a process) exists for this session
+  const isOpen = useConversationStore((s) =>
+    s.tabs.some((t) => t.conversationId === conversation.id)
+  )
   const markRead = useProjectStore((s) => s.markConversationRead)
   const duplicateConversation = useProjectStore((s) => s.duplicateConversation)
   const renameConversation = useProjectStore((s) => s.renameConversation)
@@ -55,6 +76,23 @@ export function ConversationItem({ conversation }: ConversationItemProps) {
   const isActive = activeTabId === conversation.id
   const needsAttention = conversation.unread && conversation.status !== 'running'
 
+  const isWaiting = conversation.status === 'waiting'
+  const isStopped = conversation.status === 'stopped'
+  const waitingMs = useElapsed(isWaiting ? conversation.waitingSince : undefined)
+  // For sessions that aren't waiting on the user (stopped, idle terminals, errors), how long
+  // since the last message instead
+  const inactiveMs = useElapsed(
+    !isWaiting && conversation.status !== 'running' ? conversation.lastMessageAt : undefined
+  )
+
+  const tooltip = [
+    isWaiting && waitingMs !== null && `Waiting for your input for ${formatElapsed(waitingMs)}`,
+    isStopped && 'Stopped — click to resume',
+    conversation.lastMessageAt && `Last message: ${formatDateTime(conversation.lastMessageAt)}`
+  ]
+    .filter(Boolean)
+    .join('\n')
+
   const handleClick = () => {
     if (confirming) return
     openTab(conversation.id, conversation.projectId)
@@ -71,6 +109,8 @@ export function ConversationItem({ conversation }: ConversationItemProps) {
   const handleRenameSubmit = () => {
     if (editValue.trim() && editValue.trim() !== conversation.name) {
       renameConversation(conversation.id, editValue.trim())
+      // Keep the Claude Code session named the same as the sidebar entry
+      syncClaudeName(conversation.id)
     }
     setEditing(false)
     // Focus the terminal so the user can start typing immediately
@@ -118,6 +158,16 @@ export function ConversationItem({ conversation }: ConversationItemProps) {
         setTimeout(() => openTab(result.newId, conversation.projectId), 0)
       }
     }
+  }
+
+  const handleStop = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    stopSession(conversation.id)
+  }
+
+  const handleRestart = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    restartSession(conversation.id)
   }
 
   const handleArchiveClick = (e: React.MouseEvent) => {
@@ -212,6 +262,7 @@ export function ConversationItem({ conversation }: ConversationItemProps) {
     <button
       onClick={handleClick}
       onDoubleClick={handleDoubleClick}
+      title={tooltip || undefined}
       className={`group flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs transition-colors ${
         isActive
           ? 'bg-surface-3 text-text-primary'
@@ -225,9 +276,39 @@ export function ConversationItem({ conversation }: ConversationItemProps) {
         {conversation.name}
       </span>
       <span className="ml-auto flex shrink-0 items-center gap-0.5">
-        {memoryBytes > 0 && (
-          <span className="block text-[10px] tabular-nums text-text-secondary/60 group-hover:hidden">
-            {formatMemory(memoryBytes)}
+        <span
+          className={`flex items-center gap-1.5 text-[10px] tabular-nums group-hover:hidden ${
+            needsAttention ? 'mr-1' : ''
+          }`}
+        >
+          {waitingMs !== null && (
+            <span className={waitingMs < FRESH_WAIT_MS ? 'text-warning' : 'text-warning/50'}>
+              {formatElapsed(waitingMs)}
+            </span>
+          )}
+          {inactiveMs !== null && (
+            <span className="text-text-secondary/60">{formatElapsed(inactiveMs)}</span>
+          )}
+          {memoryBytes > 0 && (
+            <span className="text-text-secondary/60">{formatMemory(memoryBytes)}</span>
+          )}
+        </span>
+        {isOpen && (
+          <span
+            onClick={handleRestart}
+            title="Restart session (resumes the conversation)"
+            className="hidden h-4 w-4 items-center justify-center rounded hover:bg-surface-3 group-hover:flex"
+          >
+            <RotateCw size={10} />
+          </span>
+        )}
+        {isOpen && !isStopped && (
+          <span
+            onClick={handleStop}
+            title="Stop session (frees memory, keeps the conversation)"
+            className="hidden h-4 w-4 items-center justify-center rounded hover:bg-surface-3 hover:text-warning group-hover:flex"
+          >
+            <Square size={9} />
           </span>
         )}
         <span

@@ -29,9 +29,10 @@ declare global {
         cwd: string,
         args?: string[],
         mode?: 'claude' | 'terminal',
-        connectionId?: string
+        connectionId?: string,
+        claude?: { sessionId: string; name?: string }
       ) => Promise<string>
-      ptyWrite: (sessionId: string, data: string) => void
+      ptyWrite: (sessionId: string, data: string, passive?: boolean) => void
       ptyResize: (sessionId: string, cols: number, rows: number) => void
       ptyKill: (sessionId: string) => Promise<void>
       ptyKillRemote: (sessionId: string) => Promise<void>
@@ -48,6 +49,11 @@ declare global {
         projectPath: string,
         sourceSessionId: string,
         newSessionId: string
+      ) => Promise<boolean>
+      claudeSetSessionTitle: (
+        projectPath: string,
+        sessionId: string,
+        name: string
       ) => Promise<boolean>
 
       // Persistence

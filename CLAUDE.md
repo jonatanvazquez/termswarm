@@ -39,7 +39,9 @@ The core engine. Each terminal tab gets a real PTY process. Two spawn modes:
 - `claude` — Resolves the Claude Code binary, runs with `--dangerously-skip-permissions`, monitors output for prompt patterns (❯ character, BEL signal) to detect status.
 - `terminal` — Spawns the user's default shell.
 
-Status detection runs on a 500ms polling interval, analyzing ANSI-stripped output to determine: `running`, `waiting`, `idle`, `error`, `paused`.
+Status detection runs on a 500ms polling interval, analyzing ANSI-stripped output to determine: `running`, `waiting`, `idle`, `error`, `paused`. `stopped` means no process: the user stopped the session or it exited cleanly.
+
+Claude spawns are async (`spawn()` returns a promise, serialized per session). The renderer only passes the Claude session ID and name; the main process (`src/main/claudeSessions.ts`) terminates any other Claude process holding that session, then picks `--resume` or `--session-id` depending on whether the transcript exists on disk, and passes `--name`.
 
 ### State Management (7 Zustand stores in `src/renderer/src/store/`)
 
@@ -54,10 +56,10 @@ All stores auto-persist to disk via `window.api` calls:
 
 ### IPC Channels
 
-PTY: `pty:spawn`, `pty:write`, `pty:resize`, `pty:kill`, `pty:pause`, `pty:resume`, `pty:killAll`
+PTY: `pty:spawn`, `pty:write`, `pty:resize`, `pty:kill`, `pty:killRemote`, `pty:retry`, `pty:pause`, `pty:resume`, `pty:killAll`
 Git: `git:isRepo`, `git:status`, `git:log`, `git:stage`, `git:unstage`, `git:stageAll`, `git:unstageAll`, `git:commit`, `git:pull`
 Persistence: `store:load`, `store:save`, `store:loadBuffers`, `store:saveBuffers`, `store:loadSettings`, `store:saveSettings`, `store:loadUILayout`, `store:saveUILayout`
-Other: `dialog:openDirectory`, `probe:url`, `claude:forkSession`
+Other: `dialog:openDirectory`, `probe:url`, `claude:forkSession`, `claude:setSessionTitle`
 
 ### Build System
 
@@ -67,6 +69,9 @@ electron-vite bundles three targets (main, preload, renderer). `node-pty` is ext
 
 - **Adding IPC channels**: Define handler in `src/main/index.ts`, expose in `src/preload/index.ts`, call via `window.api` in renderer.
 - **Claude session forking**: Copies `.jsonl` files from `~/.claude/projects/` to create branched conversations.
+- **Stopping sessions**: `stopSession` (conversationStore) kills the PTY and disposes the terminal but keeps the conversation; opening it again resumes the same Claude session. A tab in `conversationStore.tabs` is what marks a session as having a process.
+- **Session names**: the sidebar name is mirrored to the Claude Code session (`syncClaudeName`). Running sessions get `/rename` typed into an empty prompt via a passive `pty:write` (doesn't count as a user submission); sessions that aren't running get the title appended to their transcript; every launch passes `--name`.
+- **Reading Claude's screen**: `src/renderer/src/utils/claudePrompt.ts` reads the xterm buffer to find the input box and echoed user messages (both start with ❯ at column 0). The sticky message header and last-message tracking derive from it — nothing is tracked with markers.
 - **Terminal rendering**: xterm.js 6 with WebGL addon, JetBrains Mono 13px, 10k line scrollback. Buffers serialized to `buffers.json` for session restore.
 - **Web preview**: Electron `<webview>` with port detection via Node.js `net.createConnection()` (bypasses Chromium restrictions).
 - **HMR guard**: `main.tsx` blocks Vite's Navigation API reload on network recovery to prevent state loss.

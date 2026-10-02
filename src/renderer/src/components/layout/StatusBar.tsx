@@ -31,6 +31,12 @@ export function StatusBar() {
           <span className="h-1.5 w-1.5 rounded-full bg-text-secondary" />
           <span className="text-text-secondary">{counts.idle || 0} idle</span>
         </span>
+        {(counts.stopped || 0) > 0 && (
+          <span className="flex items-center gap-1.5">
+            <span className="h-1.5 w-1.5 rounded-full border border-text-secondary/60" />
+            <span className="text-text-secondary">{counts.stopped} stopped</span>
+          </span>
+        )}
         {(counts.error || 0) > 0 && (
           <span className="flex items-center gap-1.5">
             <span className="h-1.5 w-1.5 rounded-full bg-error" />

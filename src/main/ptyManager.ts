@@ -7,14 +7,27 @@ import type { BrowserWindow } from 'electron'
 import type { ClientChannel } from 'ssh2'
 import type { ConversationStatus } from '../shared/types'
 import { sshManager } from './sshManager'
+import {
+  findClaudeSessionDir,
+  isClaudeSessionId,
+  releaseClaudeSession,
+  sanitizeSessionName
+} from './claudeSessions'
 
 type SpawnMode = 'claude' | 'terminal'
+
+/** Identifies the Claude Code session a PTY should create or resume */
+export interface ClaudeSpawnInfo {
+  sessionId: string
+  name?: string
+}
 
 interface PtySession {
   process: pty.IPty | null
   sshStream: ClientChannel | null
   connectionId?: string
   cwd?: string
+  command?: string
   pendingCols: number
   pendingRows: number
   lastDataTime: number
@@ -97,8 +110,60 @@ function expandTilde(p: string): string {
   return p
 }
 
+// Markers a parent Claude Code session leaves in the environment. If TermSwarm itself was
+// launched from inside one, passing them on makes every spawned session behave as a child
+// of it (transcript saving off, inherited name) — so they are not forwarded.
+const INHERITED_CLAUDE_ENV = [
+  'CLAUDECODE',
+  'CLAUDE_CODE_ENTRYPOINT',
+  'CLAUDE_CODE_SESSION_ID',
+  'CLAUDE_CODE_CHILD_SESSION',
+  'CLAUDE_CODE_SESSION_ATTENDED',
+  'CLAUDE_CODE_MESSAGING_SOCKET',
+  'CLAUDE_CODE_MESSAGING_TOKEN',
+  'CLAUDE_PID',
+  'CLAUDE_JOB_DIR'
+]
+
+function spawnEnv(): Record<string, string> {
+  const env = { ...process.env } as Record<string, string>
+  for (const key of INHERITED_CLAUDE_ENV) delete env[key]
+  return env
+}
+
+function shellQuote(arg: string): string {
+  if (/^[A-Za-z0-9_\-=./:@]+$/.test(arg)) return arg
+  return `'${arg.replace(/'/g, `'\\''`)}'`
+}
+
+function normalizeClaudeInfo(claude?: ClaudeSpawnInfo): ClaudeSpawnInfo | undefined {
+  if (!claude || !isClaudeSessionId(claude.sessionId)) return undefined
+  const name = claude.name ? sanitizeSessionName(claude.name) : ''
+  return { sessionId: claude.sessionId, name: name || undefined }
+}
+
+/**
+ * Command line for a remote Claude session. The transcript lives on the remote host, so its
+ * shell decides between resuming it and creating it.
+ */
+function remoteClaudeCommand(args: string[], claude?: ClaudeSpawnInfo): string {
+  const base = ['claude', '--dangerously-skip-permissions', ...args].map(shellQuote).join(' ')
+  if (!claude) return base
+  const id = claude.sessionId
+  const name = claude.name ? ` --name=${shellQuote(claude.name)}` : ''
+  const script = `if ls ~/.claude/projects/*/${id}.jsonl >/dev/null 2>&1; then ${base} --resume ${id}${name}; else ${base} --session-id ${id}${name}; fi`
+  return `sh -c ${shellQuote(script)}`
+}
+
 class PtyManager {
   private sessions = new Map<string, PtySession>()
+  // Last size reported per session — a resize can arrive before its (async) spawn finishes
+  private sizes = new Map<string, { cols: number; rows: number }>()
+  private spawnQueue = new Map<string, Promise<unknown>>()
+  // Bumped by kill() so a spawn still being prepared knows it was cancelled
+  private killGeneration = new Map<string, number>()
+  // PID of the last local process killed per session — it may still be exiting
+  private lastKilledPid = new Map<string, number>()
   private mainWindow: BrowserWindow | null = null
   private statusInterval: ReturnType<typeof setInterval> | null = null
   private memoryInterval: ReturnType<typeof setInterval> | null = null
@@ -109,19 +174,45 @@ class PtyManager {
     this.startMemoryChecker()
   }
 
+  /** Spawns are serialized per session so a rapid restart can't leave two processes behind */
   spawn(
     sessionId: string,
     cwd: string,
     args: string[] = [],
     mode: SpawnMode = 'claude',
-    connectionId?: string
-  ): string {
+    connectionId?: string,
+    claude?: ClaudeSpawnInfo
+  ): Promise<string> {
+    const prev = this.spawnQueue.get(sessionId) ?? Promise.resolve()
+    const next = prev
+      .catch(() => {})
+      .then(() => this.spawnNow(sessionId, cwd, args, mode, connectionId, claude))
+    this.spawnQueue.set(sessionId, next)
+    next
+      .catch(() => {})
+      .finally(() => {
+        if (this.spawnQueue.get(sessionId) === next) this.spawnQueue.delete(sessionId)
+      })
+    return next
+  }
+
+  private async spawnNow(
+    sessionId: string,
+    cwd: string,
+    args: string[],
+    mode: SpawnMode,
+    connectionId?: string,
+    claude?: ClaudeSpawnInfo
+  ): Promise<string> {
     if (this.sessions.has(sessionId)) {
       this.kill(sessionId)
     }
+    const generation = this.killGeneration.get(sessionId) ?? 0
+
+    const claudeInfo = mode === 'claude' ? normalizeClaudeInfo(claude) : undefined
 
     if (connectionId) {
-      this.spawnSSH(sessionId, cwd, args, mode, connectionId)
+      this.spawnSSH(sessionId, cwd, args, mode, connectionId, claudeInfo)
       return sessionId
     }
 
@@ -136,21 +227,50 @@ class PtyManager {
     } else {
       binary = resolveClaudeBinary()
       spawnArgs = ['--dangerously-skip-permissions', ...args]
+
+      if (claudeInfo) {
+        // Take the session over from any process still holding it (another terminal, an
+        // orphan from a previous run, the PTY we just killed) before launching on it.
+        const ownPid = this.lastKilledPid.get(sessionId)
+        const released = await releaseClaudeSession(
+          claudeInfo.sessionId,
+          ownPid !== undefined ? [ownPid] : []
+        )
+        if (released > 0) {
+          this.send(
+            'pty:data',
+            sessionId,
+            `\x1b[90m[TermSwarm] Closed ${released} other Claude process${released === 1 ? '' : 'es'} holding this session.\x1b[0m\r\n`
+          )
+        }
+
+        // --session-id fails with "already in use" once a transcript exists, and --resume
+        // fails without one — so the transcript on disk decides, not the UI status.
+        const hasTranscript =
+          (await findClaudeSessionDir(resolvedCwd, claudeInfo.sessionId)) !== null
+        spawnArgs.push(hasTranscript ? '--resume' : '--session-id', claudeInfo.sessionId)
+        if (claudeInfo.name) spawnArgs.push(`--name=${claudeInfo.name}`)
+
+        // Stopped or closed while we were waiting — don't start a process nobody owns
+        if ((this.killGeneration.get(sessionId) ?? 0) !== generation) return sessionId
+      }
     }
+
+    const { cols, rows } = this.sizes.get(sessionId) ?? { cols: 80, rows: 24 }
 
     const ptyProcess = pty.spawn(binary, spawnArgs, {
       name: 'xterm-256color',
       cwd: resolvedCwd,
-      cols: 80,
-      rows: 24,
-      env: process.env as Record<string, string>
+      cols,
+      rows,
+      env: spawnEnv()
     })
 
     const session: PtySession = {
       process: ptyProcess,
       sshStream: null,
-      pendingCols: 80,
-      pendingRows: 24,
+      pendingCols: cols,
+      pendingRows: rows,
       lastDataTime: Date.now(),
       lastOutput: '',
       promptDetected: false,
@@ -173,9 +293,12 @@ class PtyManager {
     })
 
     ptyProcess.onExit(({ exitCode }) => {
-      const status: ConversationStatus = exitCode === 0 ? 'idle' : 'error'
+      const status: ConversationStatus = exitCode === 0 ? 'stopped' : 'error'
       session.status = status
       session.awaitingResponse = false
+      // A killed or replaced session is no longer ours to report on — without this check the
+      // late exit of an old process would remove (and mark as exited) its replacement.
+      if (this.sessions.get(sessionId) !== session) return
       this.send('pty:exit', sessionId, exitCode)
       this.sessions.delete(sessionId)
     })
@@ -188,21 +311,20 @@ class PtyManager {
     cwd: string,
     args: string[],
     mode: SpawnMode,
-    connectionId: string
+    connectionId: string,
+    claude?: ClaudeSpawnInfo
   ): void {
-    let command: string | undefined
-    if (mode === 'claude') {
-      const claudeArgs = ['--dangerously-skip-permissions', ...args].join(' ')
-      command = `claude ${claudeArgs}`
-    }
+    const command = mode === 'claude' ? remoteClaudeCommand(args, claude) : undefined
+    const { cols, rows } = this.sizes.get(sessionId) ?? { cols: 80, rows: 24 }
 
     const session: PtySession = {
       process: null,
       sshStream: null,
       connectionId,
       cwd,
-      pendingCols: 80,
-      pendingRows: 24,
+      command,
+      pendingCols: cols,
+      pendingRows: rows,
       lastDataTime: Date.now(),
       lastOutput: '',
       promptDetected: false,
@@ -275,6 +397,9 @@ class PtyManager {
     })
 
     stream.on('close', () => {
+      // Closed by kill() or replaced by a respawn — nothing to report
+      if (this.sessions.get(sessionId) !== session || session.sshStream !== stream) return
+
       // If tmux is available, the session is still alive on the server —
       // don't remove it from sessions so reconnect can reattach.
       if (sshManager.isTmuxAvailable(connectionId)) {
@@ -379,10 +504,14 @@ class PtyManager {
     this.send('pty:data', sessionId, data)
   }
 
-  write(sessionId: string, data: string): void {
+  /**
+   * `passive` writes are commands TermSwarm types on the user's behalf (e.g. /rename) —
+   * they are not a submission, so they must not flip the session to 'running'.
+   */
+  write(sessionId: string, data: string, passive = false): void {
     const session = this.sessions.get(sessionId)
     if (session) {
-      if (session.mode === 'claude') {
+      if (session.mode === 'claude' && !passive) {
         // Only treat Enter as a submission for Claude mode
         if (data.includes('\r') || data.includes('\n')) {
           session.lastOutput = ''
@@ -402,6 +531,7 @@ class PtyManager {
   }
 
   resize(sessionId: string, cols: number, rows: number): void {
+    this.sizes.set(sessionId, { cols, rows })
     const session = this.sessions.get(sessionId)
     if (session) {
       // Always store latest size so we can apply it when sshStream connects
@@ -440,10 +570,9 @@ class PtyManager {
     // Clear any stuck queue so this attempt isn't blocked behind hung requests
     sshManager.clearShellQueue(connectionId)
 
-    let command: string | undefined
-    if (session.mode === 'claude') {
-      command = 'claude --dangerously-skip-permissions'
-    }
+    // Same command as the original spawn, so a retried Claude session resumes its conversation
+    const command =
+      session.command ?? (session.mode === 'claude' ? remoteClaudeCommand([]) : undefined)
 
     session.status = 'running'
     this.sendStatus(sessionId, 'running')
@@ -481,7 +610,9 @@ class PtyManager {
   }
 
   kill(sessionId: string): void {
+    this.killGeneration.set(sessionId, (this.killGeneration.get(sessionId) ?? 0) + 1)
     const session = this.sessions.get(sessionId)
+    if (session?.process) this.lastKilledPid.set(sessionId, session.process.pid)
     if (session) {
       try {
         if (session.sshStream) {
@@ -501,13 +632,15 @@ class PtyManager {
     }
   }
 
-  /** Hard kill: also destroy the remote tmux session (for archive/delete) */
-  killRemote(sessionId: string): void {
+  /** Hard kill: also destroy the remote tmux session (for stop/archive/delete) */
+  async killRemote(sessionId: string): Promise<void> {
     const session = this.sessions.get(sessionId)
-    if (session?.connectionId && sshManager.isTmuxAvailable(session.connectionId)) {
-      sshManager.killTmuxSession(session.connectionId, sessionId).catch(() => {})
-    }
+    const connectionId = session?.connectionId
     this.kill(sessionId)
+    if (connectionId && sshManager.isTmuxAvailable(connectionId)) {
+      // Awaited so a respawn right after doesn't reattach to the session being destroyed
+      await sshManager.killTmuxSession(connectionId, sessionId)
+    }
   }
 
   pause(sessionId: string): void {
@@ -553,7 +686,7 @@ class PtyManager {
   }
 
   killAll(): void {
-    for (const [id] of this.sessions) {
+    for (const id of new Set([...this.sessions.keys(), ...this.spawnQueue.keys()])) {
       this.kill(id)
     }
     if (this.statusInterval) {

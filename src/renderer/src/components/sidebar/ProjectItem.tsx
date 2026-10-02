@@ -12,12 +12,15 @@ import {
   X,
   Terminal,
   Sparkles,
-  Server
+  Server,
+  Square
 } from 'lucide-react'
 import type { Project, ConversationType } from '../../types'
 import { useProjectStore } from '../../store/projectStore'
 import { useConversationStore, setPendingRenameForNewTab } from '../../store/conversationStore'
 import { useUIStore } from '../../store/uiStore'
+import { useTerminalStore } from '../../store/terminalStore'
+import { formatMemory } from '../../utils/format'
 import { ConversationItem } from './ConversationItem'
 
 interface ProjectItemProps {
@@ -39,12 +42,16 @@ export function ProjectItem({ project, isArchived, forceExpanded }: ProjectItemP
   const showArchived = useProjectStore((s) => s.showArchived)
   const openTab = useConversationStore((s) => s.openTab)
   const closeTab = useConversationStore((s) => s.closeTab)
+  const stopSession = useConversationStore((s) => s.stopSession)
+  const tabs = useConversationStore((s) => s.tabs)
+  const memoryBySession = useTerminalStore((s) => s.memoryBySession)
   const conversationFilter = useUIStore((s) => s.conversationFilter)
 
   const [editing, setEditing] = useState(false)
   const [editValue, setEditValue] = useState(project.name)
   const [confirmingDelete, setConfirmingDelete] = useState(false)
   const [confirmingArchive, setConfirmingArchive] = useState(false)
+  const [confirmingStop, setConfirmingStop] = useState(false)
   const [showNewMenu, setShowNewMenu] = useState(false)
   const [menuPos, setMenuPos] = useState({ top: 0, left: 0 })
   const plusRef = useRef<HTMLSpanElement>(null)
@@ -56,6 +63,11 @@ export function ProjectItem({ project, isArchived, forceExpanded }: ProjectItemP
   const activeConversations = project.conversations.filter((c) => !c.archived)
   const archivedConversations = project.conversations.filter((c) => c.archived)
   const waitingCount = activeConversations.filter((c) => c.status === 'waiting').length
+  // Sessions with a process behind them — what "stop all" would free
+  const openConversations = project.conversations.filter(
+    (c) => c.status !== 'stopped' && tabs.some((t) => t.conversationId === c.id)
+  )
+  const openMemory = openConversations.reduce((sum, c) => sum + (memoryBySession[c.id] ?? 0), 0)
   const unreadCount = activeConversations.filter((c) => c.unread && c.status !== 'running').length
   const visibleConversations = isArchived
     ? []
@@ -82,7 +94,7 @@ export function ProjectItem({ project, isArchived, forceExpanded }: ProjectItemP
   }, [showNewMenu])
 
   const handleClick = () => {
-    if (confirmingDelete || confirmingArchive) return
+    if (confirmingDelete || confirmingArchive || confirmingStop) return
     if (isActive) {
       toggleExpanded(project.id)
     } else {
@@ -154,6 +166,24 @@ export function ProjectItem({ project, isArchived, forceExpanded }: ProjectItemP
   const handleCancelDelete = (e: React.MouseEvent) => {
     e.stopPropagation()
     setConfirmingDelete(false)
+  }
+
+  const handleStopAllClick = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    setConfirmingStop(true)
+  }
+
+  const handleConfirmStop = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    for (const conv of openConversations) {
+      stopSession(conv.id)
+    }
+    setConfirmingStop(false)
+  }
+
+  const handleCancelStop = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    setConfirmingStop(false)
   }
 
   const handleArchiveClick = (e: React.MouseEvent) => {
@@ -230,6 +260,34 @@ export function ProjectItem({ project, isArchived, forceExpanded }: ProjectItemP
     )
   }
 
+  if (confirmingStop) {
+    const count = openConversations.length
+    return (
+      <div className="flex items-center justify-between rounded bg-warning/10 px-2 py-1.5 text-xs">
+        <span className="min-w-0 truncate text-warning">
+          Stop {count} {count === 1 ? 'session' : 'sessions'}?
+          {openMemory > 0 && ` (${formatMemory(openMemory)})`}
+        </span>
+        <div className="flex shrink-0 items-center gap-1">
+          <button
+            onClick={handleConfirmStop}
+            className="flex h-5 items-center gap-1 rounded bg-warning px-1.5 text-[10px] font-medium text-white hover:bg-warning/80"
+          >
+            <Check size={10} />
+            Yes
+          </button>
+          <button
+            onClick={handleCancelStop}
+            className="flex h-5 items-center gap-1 rounded bg-surface-3 px-1.5 text-[10px] font-medium text-text-secondary hover:bg-surface-2"
+          >
+            <X size={10} />
+            No
+          </button>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className={isArchived ? 'opacity-50' : ''}>
       <button
@@ -274,6 +332,17 @@ export function ProjectItem({ project, isArchived, forceExpanded }: ProjectItemP
               className="flex h-4 w-4 items-center justify-center rounded opacity-0 transition-opacity hover:bg-surface-3 group-hover:opacity-100"
             >
               <Plus size={12} />
+            </span>
+          )}
+          {openConversations.length > 0 && (
+            <span
+              onClick={handleStopAllClick}
+              title={`Stop all sessions in this project (${openConversations.length} open${
+                openMemory > 0 ? `, ${formatMemory(openMemory)}` : ''
+              }) — conversations are kept`}
+              className="flex h-4 w-4 items-center justify-center rounded opacity-0 transition-opacity hover:bg-surface-3 hover:text-warning group-hover:opacity-100"
+            >
+              <Square size={9} />
             </span>
           )}
           <span

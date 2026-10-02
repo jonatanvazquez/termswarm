@@ -1,1 +1,1 @@
-export type ConversationStatus = 'running' | 'waiting' | 'idle' | 'error' | 'paused'
+export type ConversationStatus = 'running' | 'waiting' | 'idle' | 'error' | 'paused' | 'stopped'

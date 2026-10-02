@@ -1,4 +1,4 @@
-import { Loader2, Check, AlertCircle, Pause } from 'lucide-react'
+import { Loader2, Check, AlertCircle, Pause, Power } from 'lucide-react'
 import type { ConversationStatus } from '../../types'
 
 export function StatusIndicator({ status }: { status: ConversationStatus }) {
@@ -16,6 +16,7 @@ export function StatusIndicator({ status }: { status: ConversationStatus }) {
         </span>
       )}
       {status === 'paused' && <Pause size={12} className="text-text-secondary" />}
+      {status === 'stopped' && <Power size={11} className="text-text-secondary/60" />}
     </span>
   )
 }

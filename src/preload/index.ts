@@ -27,10 +27,12 @@ const api = {
     cwd: string,
     args?: string[],
     mode?: 'claude' | 'terminal',
-    connectionId?: string
-  ): Promise<string> => ipcRenderer.invoke('pty:spawn', sessionId, cwd, args, mode, connectionId),
-  ptyWrite: (sessionId: string, data: string): void => {
-    ipcRenderer.send('pty:write', sessionId, data)
+    connectionId?: string,
+    claude?: { sessionId: string; name?: string }
+  ): Promise<string> =>
+    ipcRenderer.invoke('pty:spawn', sessionId, cwd, args, mode, connectionId, claude),
+  ptyWrite: (sessionId: string, data: string, passive?: boolean): void => {
+    ipcRenderer.send('pty:write', sessionId, data, passive)
   },
   ptyResize: (sessionId: string, cols: number, rows: number): void => {
     ipcRenderer.send('pty:resize', sessionId, cols, rows)
@@ -82,6 +84,8 @@ const api = {
     newSessionId: string
   ): Promise<boolean> =>
     ipcRenderer.invoke('claude:forkSession', projectPath, sourceSessionId, newSessionId),
+  claudeSetSessionTitle: (projectPath: string, sessionId: string, name: string): Promise<boolean> =>
+    ipcRenderer.invoke('claude:setSessionTitle', projectPath, sessionId, name),
 
   // Persistence
   loadProjects: (): Promise<unknown> => ipcRenderer.invoke('store:load'),

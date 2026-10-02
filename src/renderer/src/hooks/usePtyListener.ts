@@ -1,7 +1,7 @@
 import { useEffect } from 'react'
 import { useTerminalStore } from '../store/terminalStore'
 import { useProjectStore } from '../store/projectStore'
-import { useConversationStore } from '../store/conversationStore'
+import { useConversationStore, syncClaudeName } from '../store/conversationStore'
 import { useUIStore } from '../store/uiStore'
 import type { ConversationStatus } from '../../../shared/types'
 
@@ -17,7 +17,7 @@ export function usePtyListener(): void {
 
     const cleanupExit = window.api.onPtyExit((sessionId, exitCode) => {
       console.log('[PtyListener] onExit:', sessionId, 'code:', exitCode)
-      const status: ConversationStatus = exitCode === 0 ? 'idle' : 'error'
+      const status: ConversationStatus = exitCode === 0 ? 'stopped' : 'error'
       useProjectStore.getState().setConversationStatus(sessionId, status)
 
     })
@@ -68,6 +68,11 @@ export function usePtyListener(): void {
         if (activeTabId !== sessionId) {
           markConversationUnread(sessionId)
         }
+      }
+
+      // Back at the prompt — apply a sidebar rename that couldn't be typed in earlier
+      if (status === 'waiting') {
+        syncClaudeName(sessionId)
       }
 
     })

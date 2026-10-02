@@ -24,6 +24,13 @@ function uid(): string {
   return crypto.randomUUID().slice(0, 8)
 }
 
+// No process survives an app restart. Sessions the user stopped stay stopped; the rest are
+// shown as waiting on the user, keeping how long they have been waiting.
+function restoreSessionState(c: Conversation): Pick<Conversation, 'status' | 'waitingSince'> {
+  if (c.status === 'stopped') return { status: 'stopped', waitingSince: c.waitingSince }
+  return { status: 'waiting', waitingSince: c.waitingSince || new Date().toISOString() }
+}
+
 interface ProjectState {
   projects: Project[]
   activeProjectId: string | null
@@ -52,6 +59,10 @@ interface ProjectState {
   markConversationRead: (conversationId: string) => void
   markConversationUnread: (conversationId: string) => void
   setConversationStatus: (conversationId: string, status: ConversationStatus) => void
+  // Show a session as starting up, without counting it as the user having replied
+  markConversationLaunching: (conversationId: string) => void
+  markMessageSent: (conversationId: string) => void
+  setClaudeName: (conversationId: string, name: string) => void
   setProjectPreview: (
     projectId: string,
     previewOpen: boolean,
@@ -291,6 +302,7 @@ export const useProjectStore = create<ProjectState>((set) => ({
         unread: false,
         archived: false,
         claudeSessionId: newClaudeSessionId,
+        claudeName: undefined,
         type: original.type || 'claude'
       }
 
@@ -334,14 +346,46 @@ export const useProjectStore = create<ProjectState>((set) => ({
             ? {
                 ...c,
                 status,
+                // Stopping a session doesn't answer it: the wait keeps counting from when
+                // Claude finished, through a stop and relaunch, until the user replies.
                 waitingSince:
                   status === 'waiting'
-                    ? c.status !== 'waiting'
-                      ? new Date().toISOString()
-                      : c.waitingSince
-                    : undefined
+                    ? (c.waitingSince ?? new Date().toISOString())
+                    : status === 'stopped'
+                      ? c.waitingSince
+                      : undefined
               }
             : c
+        )
+      }))
+    })),
+
+  markConversationLaunching: (conversationId) =>
+    set((state) => ({
+      projects: state.projects.map((p) => ({
+        ...p,
+        conversations: p.conversations.map((c) =>
+          c.id === conversationId ? { ...c, status: 'running' as ConversationStatus } : c
+        )
+      }))
+    })),
+
+  markMessageSent: (conversationId) =>
+    set((state) => ({
+      projects: state.projects.map((p) => ({
+        ...p,
+        conversations: p.conversations.map((c) =>
+          c.id === conversationId ? { ...c, lastMessageAt: new Date().toISOString() } : c
+        )
+      }))
+    })),
+
+  setClaudeName: (conversationId, name) =>
+    set((state) => ({
+      projects: state.projects.map((p) => ({
+        ...p,
+        conversations: p.conversations.map((c) =>
+          c.id === conversationId ? { ...c, claudeName: name } : c
         )
       }))
     })),
@@ -412,8 +456,7 @@ export const useProjectStore = create<ProjectState>((set) => ({
             ...c,
             id: `conv-${uid()}`,
             projectId: projId,
-            status: 'waiting' as ConversationStatus,
-            waitingSince: c.waitingSince || new Date().toISOString(),
+            ...restoreSessionState(c),
             claudeSessionId:
               c.claudeSessionId || (c.type === 'terminal' ? undefined : crypto.randomUUID()),
             type: c.type || 'claude'
@@ -426,8 +469,7 @@ export const useProjectStore = create<ProjectState>((set) => ({
         archived: p.archived ?? false,
         conversations: p.conversations.map((c) => ({
           ...c,
-          status: 'waiting' as ConversationStatus,
-          waitingSince: c.waitingSince || new Date().toISOString(),
+          ...restoreSessionState(c),
           claudeSessionId:
             c.claudeSessionId || (c.type === 'terminal' ? undefined : crypto.randomUUID()),
           type: c.type || 'claude'

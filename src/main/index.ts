@@ -1,11 +1,11 @@
 import { app, shell, BrowserWindow, ipcMain, dialog, nativeImage, Menu } from 'electron'
 import { join } from 'path'
-import { homedir } from 'os'
 import { createConnection } from 'net'
 import { copyFile, cp, access } from 'fs/promises'
 import { electronApp, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
-import { ptyManager } from './ptyManager'
+import { ptyManager, type ClaudeSpawnInfo } from './ptyManager'
+import { findClaudeSessionDir, isClaudeSessionId, setClaudeSessionTitle } from './claudeSessions'
 import { gitManager } from './gitManager'
 import { sshManager } from './sshManager'
 import { emulatorManager } from './emulatorManager'
@@ -161,14 +161,15 @@ app.whenReady().then(() => {
       cwd: string,
       args?: string[],
       mode?: 'claude' | 'terminal',
-      connectionId?: string
+      connectionId?: string,
+      claude?: ClaudeSpawnInfo
     ) => {
-      return ptyManager.spawn(sessionId, cwd, args, mode, connectionId)
+      return ptyManager.spawn(sessionId, cwd, args, mode, connectionId, claude)
     }
   )
 
-  ipcMain.on('pty:write', (_e, sessionId: string, data: string) => {
-    ptyManager.write(sessionId, data)
+  ipcMain.on('pty:write', (_e, sessionId: string, data: string, passive?: boolean) => {
+    ptyManager.write(sessionId, data, passive)
   })
 
   ipcMain.on('pty:resize', (_e, sessionId: string, cols: number, rows: number) => {
@@ -180,7 +181,7 @@ app.whenReady().then(() => {
   })
 
   ipcMain.handle('pty:killRemote', (_e, sessionId: string) => {
-    ptyManager.killRemote(sessionId)
+    return ptyManager.killRemote(sessionId)
   })
 
   ipcMain.handle('pty:retry', (_e, sessionId: string) => {
@@ -199,16 +200,20 @@ app.whenReady().then(() => {
   ipcMain.handle(
     'claude:forkSession',
     async (_e, projectPath: string, sourceSessionId: string, newSessionId: string) => {
-      // Claude Code stores sessions in ~/.claude/projects/<path-with-dashes>/
-      const slug = projectPath.replace(/\//g, '-')
-      const sessionsDir = join(homedir(), '.claude', 'projects', slug)
-      const srcFile = join(sessionsDir, `${sourceSessionId}.jsonl`)
-      const dstFile = join(sessionsDir, `${newSessionId}.jsonl`)
+      if (!isClaudeSessionId(newSessionId)) return false
+      const sessionsDir = await findClaudeSessionDir(projectPath, sourceSessionId)
+      if (!sessionsDir) {
+        console.warn('[Main] claude:forkSession — .jsonl not found for:', sourceSessionId)
+        return false
+      }
 
       try {
-        await copyFile(srcFile, dstFile)
-      } catch {
-        console.warn('[Main] claude:forkSession — .jsonl not found:', srcFile)
+        await copyFile(
+          join(sessionsDir, `${sourceSessionId}.jsonl`),
+          join(sessionsDir, `${newSessionId}.jsonl`)
+        )
+      } catch (err) {
+        console.warn('[Main] claude:forkSession — copy failed:', err)
         return false
       }
 
@@ -223,6 +228,13 @@ app.whenReady().then(() => {
 
       return true
     }
+  )
+
+  // Rename a Claude Code session that isn't running (live ones are renamed via /rename)
+  ipcMain.handle(
+    'claude:setSessionTitle',
+    (_e, projectPath: string, sessionId: string, name: string) =>
+      setClaudeSessionTitle(projectPath, sessionId, name)
   )
 
   // Persistence handlers

@@ -1,4 +1,4 @@
-export type ConversationStatus = 'running' | 'waiting' | 'idle' | 'error' | 'paused'
+export type ConversationStatus = 'running' | 'waiting' | 'idle' | 'error' | 'paused' | 'stopped'
 
 export type ConversationType = 'claude' | 'terminal'
 
@@ -14,6 +14,10 @@ export interface Conversation {
   claudeSessionId?: string
   type: ConversationType
   waitingSince?: string
+  // Last time the user sent input in this session
+  lastMessageAt?: string
+  // Name last applied to the Claude Code session itself (see syncClaudeName)
+  claudeName?: string
 }
 
 export interface BrowserTab {

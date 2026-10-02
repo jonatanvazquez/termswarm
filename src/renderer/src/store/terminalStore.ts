@@ -1,26 +1,21 @@
 import { create } from 'zustand'
-import { Terminal, IMarker } from '@xterm/xterm'
+import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebglAddon } from '@xterm/addon-webgl'
 import { useUIStore } from './uiStore'
 import { useProjectStore } from './projectStore'
 import { useConversationStore } from './conversationStore'
+import { hasPendingClaudeInput } from '../utils/claudePrompt'
 
 interface TerminalInstance {
   terminal: Terminal
   fitAddon: FitAddon
 }
 
-interface UserMessage {
-  text: string
-  marker: IMarker
-}
-
 interface TerminalState {
   instances: Map<string, TerminalInstance>
   pendingContent: Map<string, string>
   memoryBySession: Record<string, number>
-  userMessages: Map<string, UserMessage[]>
   createInstance: (conversationId: string) => Terminal
   attachToElement: (conversationId: string, el: HTMLDivElement) => void
   disposeInstance: (conversationId: string) => void
@@ -31,9 +26,6 @@ interface TerminalState {
   serializeAllBuffers: () => Record<string, string>
   loadSavedBuffers: (buffers: Record<string, string>) => void
   setMemoryStats: (stats: Record<string, number>) => void
-  addUserMessage: (conversationId: string, text: string, marker: IMarker) => void
-  getUserMessages: (conversationId: string) => UserMessage[]
-  clearUserMessages: (conversationId: string) => void
 }
 
 const THEME = {
@@ -62,7 +54,6 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   instances: new Map(),
   pendingContent: new Map(),
   memoryBySession: {},
-  userMessages: new Map(),
 
   createInstance: (conversationId) => {
     const existing = get().instances.get(conversationId)
@@ -264,7 +255,8 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
 
     // Wire user input → PTY
     terminal.onData((data) => {
-      // Capture user message on Enter for Claude sessions
+      // Record when the user last sent something: a message to Claude (Enter with text in
+      // the prompt) or a command in a plain terminal.
       if (data === '\r') {
         const projectStore = useProjectStore.getState()
         let isClaudeSession = false
@@ -276,49 +268,8 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
           }
         }
 
-        if (isClaudeSession) {
-          const buffer = terminal.buffer.active
-          const scanStart = buffer.baseY
-          const scanEnd = buffer.baseY + terminal.rows
-
-          // Scan visible viewport from bottom to find the last ❯ prompt
-          let promptLine = -1
-          let fullText = ''
-          for (let y = scanEnd - 1; y >= scanStart; y--) {
-            const line = buffer.getLine(y)
-            if (!line) continue
-            const text = line.translateToString(true)
-            if (text.includes('❯')) {
-              promptLine = y
-              fullText = text
-              // Collect wrapped continuation lines below
-              for (let j = y + 1; j < scanEnd; j++) {
-                const nextLine = buffer.getLine(j)
-                if (nextLine && nextLine.isWrapped) {
-                  fullText += nextLine.translateToString(true)
-                } else {
-                  break
-                }
-              }
-              break
-            }
-          }
-
-          console.log('[Sticky] Enter pressed, promptLine:', promptLine, 'text:', JSON.stringify(fullText))
-
-          if (promptLine >= 0) {
-            const promptIdx = fullText.indexOf('❯')
-            const userText = fullText.slice(promptIdx + 1).trim()
-            console.log('[Sticky] userText:', JSON.stringify(userText))
-            if (userText) {
-              const offset = promptLine - (buffer.baseY + buffer.cursorY)
-              const marker = terminal.registerMarker(offset)
-              console.log('[Sticky] Marker created:', !!marker, 'line:', marker?.line)
-              if (marker) {
-                get().addUserMessage(conversationId, userText, marker)
-              }
-            }
-          }
+        if (!isClaudeSession || hasPendingClaudeInput(terminal)) {
+          projectStore.markMessageSent(conversationId)
         }
       }
 
@@ -371,18 +322,14 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     console.log('[TermStore] disposeInstance:', conversationId, 'pendingContent still has:', [...get().pendingContent.keys()])
     const instance = get().instances.get(conversationId)
     if (instance) {
-      // Dispose markers and clear user messages
-      const messages = get().userMessages.get(conversationId)
-      if (messages) {
-        messages.forEach((m) => m.marker.dispose())
-      }
-      get().clearUserMessages(conversationId)
-
       instance.terminal.dispose()
       set((state) => {
         const next = new Map(state.instances)
         next.delete(conversationId)
-        return { instances: next }
+        // Its process is gone too — don't keep showing the last memory reading
+        const memoryBySession = { ...state.memoryBySession }
+        delete memoryBySession[conversationId]
+        return { instances: next, memoryBySession }
       })
       console.log('[TermStore] disposeInstance DONE, pendingContent still has:', [...get().pendingContent.keys()])
     }
@@ -473,26 +420,5 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
 
   setMemoryStats: (stats) => {
     set({ memoryBySession: stats })
-  },
-
-  addUserMessage: (conversationId, text, marker) => {
-    set((state) => {
-      const next = new Map(state.userMessages)
-      const list = next.get(conversationId) || []
-      next.set(conversationId, [...list, { text, marker }])
-      return { userMessages: next }
-    })
-  },
-
-  getUserMessages: (conversationId) => {
-    return get().userMessages.get(conversationId) || []
-  },
-
-  clearUserMessages: (conversationId) => {
-    set((state) => {
-      const next = new Map(state.userMessages)
-      next.delete(conversationId)
-      return { userMessages: next }
-    })
   }
 }))
